@@ -1,12 +1,12 @@
 use crate::prelude::*;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Rng {
   x: u64,
   y: u64,
 }
 
-#[inline]
+#[inline(always)]
 const fn umulh(x: u64, y: u64) -> u64 {
   (((x as u128) * (y as u128)) >> 64) as u64
 }
@@ -20,40 +20,49 @@ impl Rng {
     Self { x, y }
   }
 
-  #[inline] 
-  pub fn next(self) -> (Self, u64) {
-    let Self { x, y } = self;
+  pub fn from_system_seed() -> Self {
+    let mut seed = [0; 16];
+    getrandom::getrandom(&mut seed).expect("getrandom::getrandom failed!");
+    Self::from_seed(seed)
+  }
+
+  #[inline(always)] 
+  pub fn u64(&mut self) -> u64 {
+    let x = self.x;
+    let y = self.y;
 
     let u = x.rotate_right(7) ^ y;
     let v = x ^ x >> 19;
     let w = x.wrapping_mul(y) ^ umulh(x, y);
     let z = u.wrapping_add(w);
 
-    (Self { x: u, y: v }, z)
-  }
-}
+    self.x = u;
+    self.y = v;
 
-pub struct ThreadLocalRng {
-  rng: Cell<Rng>,
-}
-
-impl ThreadLocalRng {
-  pub fn from_system_seed() -> Self {
-    let mut seed = [0; 16];
-    getrandom::getrandom(&mut seed).unwrap();
-    Self { rng: Cell::new(Rng::from_seed(seed)) }
+    z
   }
 
-  pub fn u64x2(&self) -> [u64; 2] {
-    let s = self.rng.get();
-    let (s, a) = s.next();
-    let (s, b) = s.next();
-    self.rng.set(s);
-    [a, b]
+  #[inline(always)]
+  pub fn with_thread_local<F, A>(f: F) -> A where F: FnOnce(&mut Self) -> A {
+    THREAD_LOCAL.with(|t| {
+      // SAFETY:
+      //
+      // There is no fundamental reason why `Rng` doesn't implement `Copy`; it is
+      // only omitted to make the API harder to misuse.
+      //
+      // So we do essentially the same thing as `Cell::get` and make a copy as
+      // we read the value.
+
+      let p = t.as_ptr();
+      let mut g = unsafe { p.read() };
+      let a = f(&mut g);
+      t.set(g);
+      a
+    })
   }
 }
 
 std::thread_local! {
-  pub static THREAD_LOCAL_RNG: ThreadLocalRng =
-    ThreadLocalRng::from_system_seed();
+  pub static THREAD_LOCAL: Cell<Rng> =
+    Cell::new(Rng::from_system_seed());
 }
