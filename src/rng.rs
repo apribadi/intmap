@@ -8,6 +8,23 @@ const fn umulh(x: u64, y: u64) -> u64 {
   (((x as u128) * (y as u128)) >> 64) as u64
 }
 
+#[inline(always)]
+const fn next(s: NonZeroU128) -> (NonZeroU128, u64) {
+  let s = s.get();
+  let u = s as u64;
+  let v = (s >> 64) as u64;
+
+  let x = u.rotate_right(7) ^ v;
+  let y = u ^ u >> 19;
+  let z = u.wrapping_mul(v) ^ umulh(u, v);
+  let z = z.wrapping_add(x);
+
+  let s = (x as u128) | ((y as u128) << 64);
+  let s = unsafe { NonZeroU128::new_unchecked(s) };
+
+  (s, z)
+}
+
 impl Rng {
   #[inline(always)] 
   pub const fn new(seed: NonZeroU128) -> Self {
@@ -27,21 +44,8 @@ impl Rng {
   #[inline(always)] 
   pub fn u64(&mut self) -> u64 {
     let s = self.0;
-
-    let s = u128::from(s);
-    let u = s as u64;
-    let v = (s >> 64) as u64;
-
-    let x = u.rotate_right(7) ^ v;
-    let y = u ^ u >> 19;
-    let z = u.wrapping_mul(v) ^ umulh(u, v);
-    let z = z.wrapping_add(x);
-
-    let s = (x as u128) | ((y as u128) << 64);
-    let s = unsafe { NonZeroU128::new_unchecked(s) };
-
+    let (s, z) = next(s);
     self.0 = s;
-
     z
   }
 

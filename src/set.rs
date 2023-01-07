@@ -1,5 +1,8 @@
 use crate::prelude::*;
 
+// It is a non-trivial fact that `HashMapNZ64<()>` is a good representation for
+// a set.
+
 pub struct HashSetNZ64(HashMapNZ64<()>);
 
 impl HashSetNZ64 {

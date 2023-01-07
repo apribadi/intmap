@@ -2,7 +2,7 @@ use crate::prelude::*;
 
 const INITIAL_SHIFT: u8 = 61;
 const INITIAL_EXTRA: u8 = 0;
-// const INITIAL_NUM_SLOTS: usize = num_slots(INITIAL_SHIFT, INITIAL_EXTRA);
+const INITIAL_NUM_SLOTS: usize = num_slots(INITIAL_SHIFT, INITIAL_EXTRA);
 
 pub struct HashMapNZ64<A> {
   mults: [u64; 2],
@@ -12,8 +12,8 @@ pub struct HashMapNZ64<A> {
   extra: u8,
 }
 
-unsafe impl<A> Send for HashMapNZ64<A> { }
-unsafe impl<A> Sync for HashMapNZ64<A> { }
+unsafe impl<A> Send for HashMapNZ64<A> {}
+unsafe impl<A> Sync for HashMapNZ64<A> {}
 
 struct Slot<A> {
   hash: u64,
@@ -146,13 +146,7 @@ impl<A> HashMapNZ64<A> {
   pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<A> {
     let t = self.table as *mut Slot<A>;
 
-    if t.is_null() {
-      // TODO:
-      //
-      // tail-call cold path
-
-      unimplemented!()
-    }
+    if t.is_null() { return self.insert_cold_table_is_null(key, value); }
 
     let m = self.mults;
     let k = self.shift;
@@ -181,6 +175,58 @@ impl<A> HashMapNZ64<A> {
 
       unimplemented!()
     }
+  }
+
+  #[inline(never)]
+  #[cold]
+  fn insert_cold_table_is_null(&mut self, key: NonZeroU64, value: A) -> Option<A> {
+    // PRECONDITION:
+    //
+    // - The hashmap is unchanged since its creation by `new`.
+
+    // This asserts a constant expression!
+    //
+    // Note that `size_of()` includes alignment padding.
+
+    assert!(INITIAL_NUM_SLOTS <= isize::MAX as usize / mem::size_of::<Slot<A>>());
+
+    let align = mem::align_of::<Slot<A>>();
+    let size = INITIAL_NUM_SLOTS * mem::size_of::<Slot<A>>();
+
+    // SAFETY:
+    //
+    // - Because `align` is the alignment of `Slot<A>` we know that it is a
+    //   valid alignment.
+    // - We've asserted that the length is not too long.
+
+    let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
+
+    // SAFETY:
+    //
+    // - `size` is positive.
+
+    // Note that `alloc_zeroed` initializes all slot hash values to zero.
+
+    let table = unsafe { std::alloc::alloc_zeroed(layout) };
+
+    if table.is_null() { match std::alloc::handle_alloc_error(layout) {} }
+
+    // Inserts into a fresh table. We know that there won't be a collision!
+
+    let t = table as *mut Slot<A>;
+    let m = self.mults;
+    let x = hash(m, key);
+    let i = (! x >> INITIAL_SHIFT) as usize;
+    let p = t.wrapping_add(i);
+    let s = unsafe { &mut *p };
+
+    s.hash = x;
+    s.value.write(value);
+
+    self.table = table as *const Slot<A>;
+    self.count = 1;
+
+    None
   }
 
   #[inline]
@@ -255,8 +301,8 @@ impl<A> Drop for HashMapNZ64<A> {
       }
     }
 
-    let size = mem::size_of::<Slot<A>>() * n;
     let align = mem::align_of::<Slot<A>>();
+    let size = n * mem::size_of::<Slot<A>>();
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
     unsafe { std::alloc::dealloc(t as *mut u8, layout) };
