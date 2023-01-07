@@ -1,5 +1,9 @@
 use crate::prelude::*;
 
+const INITIAL_SHIFT: u8 = 61;
+const INITIAL_EXTRA: u8 = 0;
+// const INITIAL_NUM_SLOTS: usize = num_slots(INITIAL_SHIFT, INITIAL_EXTRA);
+
 pub struct HashMapNZ64<A> {
   mults: [u64; 2],
   table: *const Slot<A>, // covariant in `A`
@@ -8,16 +12,19 @@ pub struct HashMapNZ64<A> {
   extra: u8,
 }
 
+unsafe impl<A> Send for HashMapNZ64<A> { }
+unsafe impl<A> Sync for HashMapNZ64<A> { }
+
 struct Slot<A> {
   hash: u64,
   value: MaybeUninit<A>,
 }
 
 #[inline(always)]
-fn hash(m: [u64; 2], x: NonZeroU64) -> u64 {
+const fn hash(m: [u64; 2], x: NonZeroU64) -> u64 {
   let a = m[0]; // `m`s should be odd
   let b = m[1];
-  let x = u64::from(x);
+  let x = x.get();
   let x = x.wrapping_mul(a);
   let x = x.swap_bytes();
   let x = x.wrapping_mul(b);
@@ -25,7 +32,7 @@ fn hash(m: [u64; 2], x: NonZeroU64) -> u64 {
 }
 
 #[inline(always)]
-fn num_slots(shift: u8, extra: u8) -> usize {
+const fn num_slots(shift: u8, extra: u8) -> usize {
   let k = shift as usize;
   let e = extra as usize;
   let w = 64 - k;
@@ -39,8 +46,8 @@ impl<A> HashMapNZ64<A> {
       mults: Rng::with_thread_local(|g| [g.u64() | 1, g.u64() | 1]),
       table: ptr::null(),
       count: 0,
-      shift: 61,
-      extra: 0,
+      shift: INITIAL_SHIFT,
+      extra: INITIAL_EXTRA,
     }
   }
 
@@ -98,8 +105,7 @@ impl<A> HashMapNZ64<A> {
     }
 
     if y == x {
-      let s = unsafe { &*p };
-      let v = &s.value;
+      let v = &unsafe { &*p }.value;
       let v = unsafe { v.assume_init_ref() };
       Some(v)
     } else {
@@ -128,8 +134,7 @@ impl<A> HashMapNZ64<A> {
     }
 
     if y == x {
-      let s = unsafe { &mut *p };
-      let v = &mut s.value;
+      let v = &mut unsafe { &mut *p }.value;
       let v = unsafe { v.assume_init_mut() };
       Some(v)
     } else {
@@ -141,7 +146,13 @@ impl<A> HashMapNZ64<A> {
   pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<A> {
     let t = self.table as *mut Slot<A>;
 
-    if t.is_null() { return None; }
+    if t.is_null() {
+      // TODO:
+      //
+      // tail-call cold path
+
+      unimplemented!()
+    }
 
     let m = self.mults;
     let k = self.shift;
@@ -158,8 +169,7 @@ impl<A> HashMapNZ64<A> {
     }
 
     if y == x {
-      let s = unsafe { &mut *p };
-      let v = &mut s.value;
+      let v = &mut unsafe { &mut *p }.value;
       let v = unsafe { v.assume_init_mut() };
       let v = mem::replace(v, value);
       Some(v)
@@ -217,9 +227,9 @@ impl<A> HashMapNZ64<A> {
       let x = s.hash;
       let v = &mut s.value;
 
-      if x != 0 { unsafe { v.assume_init_drop() } }
-
       s.hash = 0;
+
+      if mem::needs_drop::<A>() && x != 0 { unsafe { v.assume_init_drop() } }
     }
   }
 }
@@ -234,20 +244,21 @@ impl<A> Drop for HashMapNZ64<A> {
     let e = self.extra;
     let n = num_slots(k, e);
 
-    for i in 0 .. n {
-      let p = t.wrapping_add(i);
-      let s = unsafe { &mut *p };
-      let x = s.hash;
-      let v = &mut s.value;
+    if mem::needs_drop::<A>() {
+      for i in 0 .. n {
+        let p = t.wrapping_add(i);
+        let s = unsafe { &mut *p };
+        let x = s.hash;
+        let v = &mut s.value;
 
-      if x != 0 { unsafe { v.assume_init_drop() } }
+        if x != 0 { unsafe { v.assume_init_drop() } }
+      }
     }
 
-    let table = t as *mut u8;
     let size = mem::size_of::<Slot<A>>() * n;
     let align = mem::align_of::<Slot<A>>();
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
-    unsafe { std::alloc::dealloc(table, layout) };
+    unsafe { std::alloc::dealloc(t as *mut u8, layout) };
   }
 }

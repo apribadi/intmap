@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 getrandom = "0.2.8"
+ahash = { version = "0.8.2", features = [ "std" ] } # TODO: dev dependency
+fxhash = { version = "0.2.1" } # TODO: dev dependency
 
 [dev-dependencies]
 expect-test = "1.4.0"

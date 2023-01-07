@@ -1,10 +1,7 @@
 use crate::prelude::*;
 
 #[derive(Clone)]
-pub struct Rng {
-  x: u64,
-  y: u64,
-}
+pub struct Rng(NonZeroU128);
 
 #[inline(always)]
 const fn umulh(x: u64, y: u64) -> u64 {
@@ -12,32 +9,38 @@ const fn umulh(x: u64, y: u64) -> u64 {
 }
 
 impl Rng {
-  pub fn from_seed(seed: [u8; 16]) -> Self {
-    let seed = u128::from_le_bytes(seed);
-    let seed = if seed == 0 { 0xbaad_5eed_baad_5eed } else { seed };
-    let x = seed as u64;
-    let y = (seed >> 64) as u64;
-    Self { x, y }
+  #[inline(always)] 
+  pub const fn new(seed: NonZeroU128) -> Self {
+    Self(seed)
   }
 
+  #[inline(never)]
+  #[cold]
   pub fn from_system_seed() -> Self {
     let mut seed = [0; 16];
     getrandom::getrandom(&mut seed).expect("getrandom::getrandom failed!");
-    Self::from_seed(seed)
+    let seed = u128::from_le_bytes(seed);
+    let seed = NonZeroU128::new(seed).expect("getrandom::getrandom returned all zeros!");
+    Self::new(seed)
   }
 
   #[inline(always)] 
   pub fn u64(&mut self) -> u64 {
-    let x = self.x;
-    let y = self.y;
+    let s = self.0;
 
-    let u = x.rotate_right(7) ^ y;
-    let v = x ^ x >> 19;
-    let w = x.wrapping_mul(y) ^ umulh(x, y);
-    let z = u.wrapping_add(w);
+    let s = u128::from(s);
+    let u = s as u64;
+    let v = (s >> 64) as u64;
 
-    self.x = u;
-    self.y = v;
+    let x = u.rotate_right(7) ^ v;
+    let y = u ^ u >> 19;
+    let z = u.wrapping_mul(v) ^ umulh(u, v);
+    let z = z.wrapping_add(x);
+
+    let s = (x as u128) | ((y as u128) << 64);
+    let s = unsafe { NonZeroU128::new_unchecked(s) };
+
+    self.0 = s;
 
     z
   }
@@ -45,24 +48,20 @@ impl Rng {
   #[inline(always)]
   pub fn with_thread_local<F, A>(f: F) -> A where F: FnOnce(&mut Self) -> A {
     THREAD_LOCAL.with(|t| {
-      // SAFETY:
-      //
-      // There is no fundamental reason why `Rng` doesn't implement `Copy`; it is
-      // only omitted to make the API harder to misuse.
-      //
-      // So we do essentially the same thing as `Cell::get` and make a copy as
-      // we read the value.
-
-      let p = t.as_ptr();
-      let mut g = unsafe { p.read() };
+      let s = t.get();
+      let mut g =
+        match NonZeroU128::new(s) {
+          None => Rng::from_system_seed(),
+          Some(s) => Rng::new(s)
+        };
       let a = f(&mut g);
-      t.set(g);
+      let s = u128::from(g.0);
+      t.set(s);
       a
     })
   }
 }
 
 std::thread_local! {
-  pub static THREAD_LOCAL: Cell<Rng> =
-    Cell::new(Rng::from_system_seed());
+  static THREAD_LOCAL: Cell<u128> = const { Cell::new(0) };
 }
