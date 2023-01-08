@@ -33,9 +33,9 @@ const fn hash(m: [u64; 2], x: NonZeroU64) -> u64 {
 
 #[inline(always)]
 const fn num_slots(shift: u8, extra: u8) -> usize {
-  let k = shift as usize;
+  let s = shift as usize;
   let e = extra as usize;
-  let w = 64 - k;
+  let w = 64 - s;
 
   (1 << w) + ((w + 1) << e)
 }
@@ -68,20 +68,19 @@ impl<A> HashMapNZ64<A> {
     if t.is_null() { return false; }
 
     let m = self.mults;
-    let k = self.shift;
-    let x = hash(m, key);
-    let i = (! x >> k) as usize;
+    let s = self.shift;
+    let h = hash(m, key);
 
-    let mut p = t.wrapping_add(i);
-    let mut y;
+    let mut p = t.wrapping_add((! h >> s) as usize);
+    let mut x;
 
     loop {
-      y = unsafe { &*p }.hash;
-      if y <= x { break; }
+      x = unsafe { &*p }.hash;
+      if x <= h { break; }
       p = p.wrapping_add(1);
     }
 
-    return y == x;
+    return x == h;
   }
 
   #[inline]
@@ -91,23 +90,20 @@ impl<A> HashMapNZ64<A> {
     if t.is_null() { return None; }
 
     let m = self.mults;
-    let k = self.shift;
-    let x = hash(m, key);
-    let i = (! x >> k) as usize;
+    let s = self.shift;
+    let h = hash(m, key);
 
-    let mut p = t.wrapping_add(i);
-    let mut y;
+    let mut p = t.wrapping_add((! h >> s) as usize);
+    let mut x;
 
     loop {
-      y = unsafe { &*p }.hash;
-      if y <= x { break; }
+      x = unsafe { &*p }.hash;
+      if x <= h { break; }
       p = p.wrapping_add(1);
     }
 
-    if y == x {
-      let v = &unsafe { &*p }.value;
-      let v = unsafe { v.assume_init_ref() };
-      Some(v)
+    if x == h {
+      Some(unsafe { (&*p).value.assume_init_ref() })
     } else {
       None
     }
@@ -120,23 +116,20 @@ impl<A> HashMapNZ64<A> {
     if t.is_null() { return None; }
 
     let m = self.mults;
-    let k = self.shift;
-    let x = hash(m, key);
-    let i = (! x >> k) as usize;
+    let s = self.shift;
+    let h = hash(m, key);
 
-    let mut p = t.wrapping_add(i);
-    let mut y;
+    let mut p = t.wrapping_add((! h >> s) as usize);
+    let mut x;
 
     loop {
-      y = unsafe { &*p }.hash;
-      if y <= x { break; }
+      x = unsafe { &*p }.hash;
+      if x <= h { break; }
       p = p.wrapping_add(1);
     }
 
-    if y == x {
-      let v = &mut unsafe { &mut *p }.value;
-      let v = unsafe { v.assume_init_mut() };
-      Some(v)
+    if x == h {
+      Some(unsafe { (&mut *p).value.assume_init_mut() })
     } else {
       None
     }
@@ -149,31 +142,33 @@ impl<A> HashMapNZ64<A> {
     if t.is_null() { return self.insert_cold_table_is_null(key, value); }
 
     let m = self.mults;
-    let k = self.shift;
-    let x = hash(m, key);
-    let i = (! x >> k) as usize;
+    let s = self.shift;
+    let h = hash(m, key);
 
-    let mut p = t.wrapping_add(i);
-    let mut y;
+    let mut p = t.wrapping_add((! h >> s) as usize);
+    let mut x;
 
     loop {
-      y = unsafe { &*p }.hash;
-      if y <= x { break; }
+      x = unsafe { &*p }.hash;
+      if x <= h { break; }
       p = p.wrapping_add(1);
     }
 
-    if y == x {
-      let v = &mut unsafe { &mut *p }.value;
-      let v = unsafe { v.assume_init_mut() };
-      let v = mem::replace(v, value);
+    if x == h {
+      let v = mem::replace(unsafe { (&mut *p).value.assume_init_mut() }, value);
       Some(v)
     } else {
-      // TODO: finish insert.
+      let v = mem::replace(&mut unsafe { &mut *p }.value, MaybeUninit::new(value));
+      let mut a = Slot { hash: x, value: v };
+
+      while a.hash != 0 {
+        p = p.wrapping_add(1);
+        a = mem::replace(unsafe { &mut *p }, a);
+      }
+
       // TODO: maybe grow.
 
-      // None
-
-      unimplemented!()
+      None
     }
   }
 
@@ -184,9 +179,8 @@ impl<A> HashMapNZ64<A> {
     //
     // - The hashmap is unchanged since its creation by `new`.
 
-    // This asserts a constant expression!
-    //
-    // Note that `size_of()` includes alignment padding.
+    // The following asserts a constant expression!  Note that `size_of()`
+    // includes alignment padding.
 
     assert!(INITIAL_NUM_SLOTS <= isize::MAX as usize / mem::size_of::<Slot<A>>());
 
@@ -207,23 +201,20 @@ impl<A> HashMapNZ64<A> {
 
     // Note that `alloc_zeroed` initializes all slot hash values to zero.
 
-    let table = unsafe { std::alloc::alloc_zeroed(layout) };
+    let t = unsafe { std::alloc::alloc_zeroed(layout) } as *mut Slot<A>;
 
-    if table.is_null() { match std::alloc::handle_alloc_error(layout) {} }
+    if t.is_null() { match std::alloc::handle_alloc_error(layout) {} }
 
     // Inserts into a fresh table. We know that there won't be a collision!
 
-    let t = table as *mut Slot<A>;
     let m = self.mults;
-    let x = hash(m, key);
-    let i = (! x >> INITIAL_SHIFT) as usize;
-    let p = t.wrapping_add(i);
-    let s = unsafe { &mut *p };
+    let h = hash(m, key);
+    let p = t.wrapping_add((! h >> INITIAL_SHIFT) as usize);
 
-    s.hash = x;
-    s.value.write(value);
+    unsafe { &mut *p }.hash = h;
+    unsafe { &mut *p }.value.write(value);
 
-    self.table = table as *const Slot<A>;
+    self.table = t;
     self.count = 1;
 
     None
@@ -236,20 +227,19 @@ impl<A> HashMapNZ64<A> {
     if t.is_null() { return None; }
 
     let m = self.mults;
-    let k = self.shift;
-    let x = hash(m, key);
-    let i = (! x >> k) as usize;
+    let s = self.shift;
+    let h = hash(m, key);
 
-    let mut p = t.wrapping_add(i);
-    let mut y;
+    let mut p = t.wrapping_add((! h >> s) as usize);
+    let mut x;
 
     loop {
-      y = unsafe { &*p }.hash;
-      if y <= x { break; }
+      x = unsafe { &*p }.hash;
+      if x <= h { break; }
       p = p.wrapping_add(1);
     }
 
-    if y == x {
+    if x == h {
       // TODO
 
       unimplemented!()
@@ -263,19 +253,16 @@ impl<A> HashMapNZ64<A> {
 
     if t.is_null() { return; }
 
-    let k = self.shift;
+    let s = self.shift;
     let e = self.extra;
-    let n = num_slots(k, e);
+    let n = num_slots(s, e);
 
-    for i in 0 .. n {
-      let p = t.wrapping_add(i);
-      let s = unsafe { &mut *p };
-      let x = s.hash;
-      let v = &mut s.value;
+    for p in (0 .. n).map(|i| t.wrapping_add(i)) {
+      if mem::needs_drop::<A>() && unsafe { &*p }.hash != 0 {
+        unsafe { (&mut *p).value.assume_init_drop() };
+      }
 
-      s.hash = 0;
-
-      if mem::needs_drop::<A>() && x != 0 { unsafe { v.assume_init_drop() } }
+      unsafe { &mut *p }.hash = 0;
     }
   }
 }
@@ -286,18 +273,15 @@ impl<A> Drop for HashMapNZ64<A> {
 
     if t.is_null() { return; }
 
-    let k = self.shift;
+    let s = self.shift;
     let e = self.extra;
-    let n = num_slots(k, e);
+    let n = num_slots(s, e);
 
     if mem::needs_drop::<A>() {
-      for i in 0 .. n {
-        let p = t.wrapping_add(i);
-        let s = unsafe { &mut *p };
-        let x = s.hash;
-        let v = &mut s.value;
-
-        if x != 0 { unsafe { v.assume_init_drop() } }
+      for p in (0 .. n).map(|i| t.wrapping_add(i)) {
+        if unsafe { &*p }.hash != 0 {
+          unsafe { (&mut *p).value.assume_init_drop() };
+        }
       }
     }
 

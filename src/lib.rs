@@ -35,6 +35,14 @@ pub fn hmnz_get(t: &HashMapNZ64<u64>, x: NonZeroU64) -> Option<&u64> {
   t.get(x)
 }
 
+pub fn hmnz_insert(t: &mut HashMapNZ64<u64>, x: NonZeroU64, v: u64) -> Option<u64> {
+  t.insert(x, v)
+}
+
+pub fn hmnz_clear(t: &mut HashMapNZ64<u64>) {
+  t.clear()
+}
+
 pub fn hsnz_contains(t: &HashSetNZ64, x: NonZeroU64) -> bool {
   t.contains(x)
 }

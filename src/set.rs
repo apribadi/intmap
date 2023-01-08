@@ -6,6 +6,7 @@ use crate::prelude::*;
 pub struct HashSetNZ64(HashMapNZ64<()>);
 
 impl HashSetNZ64 {
+  #[inline]
   pub fn new() -> Self {
     Self(HashMapNZ64::new())
   }
