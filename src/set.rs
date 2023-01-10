@@ -6,14 +6,8 @@ use crate::prelude::*;
 pub struct HashSetNZ64(HashMapNZ64<()>);
 
 impl HashSetNZ64 {
-  #[inline]
   pub fn new() -> Self {
     Self(HashMapNZ64::new())
-  }
-
-  #[inline]
-  pub fn is_empty(&self) -> bool {
-    self.0.is_empty()
   }
 
   #[inline]
@@ -36,7 +30,6 @@ impl HashSetNZ64 {
     self.0.remove(key).is_some()
   }
 
-  #[inline]
   pub fn clear(&mut self) {
     self.0.clear()
   }

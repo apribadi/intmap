@@ -21,17 +21,17 @@ fn get_system_seed() -> NonZeroU128 {
 }
 
 impl Rng {
-  #[inline(always)] 
+  #[inline] 
   pub const fn new(seed: NonZeroU128) -> Self {
     Self { state: seed }
   }
 
-  #[inline(always)]
+  #[inline]
   pub const fn state(&self) -> NonZeroU128 {
     self.state
   }
 
-  #[inline(always)] 
+  #[inline] 
   pub fn u64(&mut self) -> u64 {
     let s = self.state;
 
@@ -52,7 +52,7 @@ impl Rng {
     z
   }
 
-  #[inline(always)]
+  #[inline]
   pub fn with_thread_local<F, A>(f: F) -> A where F: FnOnce(&mut Self) -> A {
     THREAD_LOCAL.with(|t| {
       let s = t.get();
