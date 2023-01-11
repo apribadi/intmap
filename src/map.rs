@@ -133,7 +133,7 @@ impl<A> HashMapNZ64<A> {
   pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<A> {
     let t = self.table as *mut Slot<A>;
 
-    if t.is_null() { return self.insert_cold_null_table(key, value); }
+    if t.is_null() { return self.insert_cold_init_table(key, value); }
 
     let m = self.mults;
     let s = self.shift;
@@ -172,7 +172,7 @@ impl<A> HashMapNZ64<A> {
 
   #[inline(never)]
   #[cold]
-  fn insert_cold_null_table(&mut self, key: NonZeroU64, value: A) -> Option<A> {
+  fn insert_cold_init_table(&mut self, key: NonZeroU64, value: A) -> Option<A> {
     assert!(INITIAL_N <= isize::MAX as usize / mem::size_of::<Slot<A>>());
 
     let align = mem::align_of::<Slot<A>>();
@@ -244,10 +244,13 @@ impl<A> HashMapNZ64<A> {
     assert!(1 <= new_u && new_u <= usize::BITS as usize - 1);
     assert!(1 <= new_v && new_v <= usize::BITS as usize - 2);
 
+    let new_s = 64 - new_u;
+
+    assert!(new_s <= 63);
+
     let new_d = 1 << new_u;
     let new_e = 1 << new_v;
     let new_n = new_d + new_e;
-    let new_s = 64 - new_u;
 
     assert!(new_n <= isize::MAX as usize / mem::size_of::<Slot<A>>());
 
