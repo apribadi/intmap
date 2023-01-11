@@ -16,9 +16,13 @@ struct Slot<A> {
   value: MaybeUninit<A>,
 }
 
-const INITIAL_SHIFT: usize = 61;
-const INITIAL_SPACE: usize = 1 << (64 - INITIAL_SHIFT - 1);
-const INITIAL_NUM_SLOTS: usize = 12;
+const INITIAL_U: usize = 4;
+const INITIAL_V: usize = 3;
+const INITIAL_D: usize = 1 << INITIAL_U;
+const INITIAL_E: usize = 1 << INITIAL_V;
+const INITIAL_N: usize = INITIAL_D + INITIAL_E;
+const INITIAL_S: usize = 64 - INITIAL_U;
+const INITIAL_K: usize = INITIAL_D / 2;
 
 #[inline(always)]
 const fn hash(m: [u64; 2], x: NonZeroU64) -> u64 {
@@ -32,8 +36,9 @@ const fn hash(m: [u64; 2], x: NonZeroU64) -> u64 {
 }
 
 #[inline(always)]
-const fn spot(shift: usize, h: u64) -> isize {
-  (h >> shift) as isize
+const unsafe fn spot(shift: usize, h: u64) -> isize {
+  if ! (shift <= 63) { unsafe { unreachable_unchecked() }; }
+  (h >> shift) as isize 
 }
 
 impl<A> HashMapNZ64<A> {
@@ -41,8 +46,8 @@ impl<A> HashMapNZ64<A> {
     Self {
       mults: Rng::with_thread_local(|g| [g.u64() | 1, g.u64() | 1]),
       table: ptr::null(),
-      shift: INITIAL_SHIFT,
-      space: INITIAL_SPACE,
+      shift: INITIAL_S,
+      space: INITIAL_K,
       check: ptr::null(),
     }
   }
@@ -66,12 +71,11 @@ impl<A> HashMapNZ64<A> {
     let m = self.mults;
     let s = self.shift;
     let h = hash(m, key);
-    let i = spot(s, h);
 
-    let mut p = unsafe { t.sub(i as usize) };
+    let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
 
-    while x > h {
+    while ! (x <= h) {
       p = unsafe { p.add(1) };
       x = unsafe { &*p }.hash;
     }
@@ -88,12 +92,11 @@ impl<A> HashMapNZ64<A> {
     let m = self.mults;
     let s = self.shift;
     let h = hash(m, key);
-    let i = spot(s, h);
 
-    let mut p = unsafe { t.sub(i as usize) };
+    let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
 
-    while x > h {
+    while ! (x <= h) {
       p = unsafe { p.add(1) };
       x = unsafe { &*p }.hash;
     }
@@ -112,12 +115,11 @@ impl<A> HashMapNZ64<A> {
     let m = self.mults;
     let s = self.shift;
     let h = hash(m, key);
-    let i = spot(s, h);
 
-    let mut p = unsafe { t.sub(i as usize) };
+    let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
 
-    while x > h {
+    while ! (x <= h) {
       p = unsafe { p.add(1) };
       x = unsafe { &*p }.hash;
     }
@@ -136,12 +138,11 @@ impl<A> HashMapNZ64<A> {
     let m = self.mults;
     let s = self.shift;
     let h = hash(m, key);
-    let i = spot(s, h);
 
-    let mut p = unsafe { t.sub(i as usize) };
+    let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
 
-    while x > h {
+    while ! (x <= h) {
       p = unsafe { p.add(1) };
       x = unsafe { &*p }.hash;
     }
@@ -172,50 +173,29 @@ impl<A> HashMapNZ64<A> {
   #[inline(never)]
   #[cold]
   fn insert_cold_null_table(&mut self, key: NonZeroU64, value: A) -> Option<A> {
-    // PRECONDITION:
-    //
-    // - The hashmap is unchanged since its creation by `new`.
-
-    // The following asserts a constant expression.  Note that `size_of()`
-    // includes alignment padding.
-
-    assert!(INITIAL_NUM_SLOTS <= isize::MAX as usize / mem::size_of::<Slot<A>>());
+    assert!(INITIAL_N <= isize::MAX as usize / mem::size_of::<Slot<A>>());
 
     let align = mem::align_of::<Slot<A>>();
-    let size = INITIAL_NUM_SLOTS * mem::size_of::<Slot<A>>();
-
-    // SAFETY:
-    //
-    // - Because `align` is the alignment of `Slot<A>` we know that it is a
-    //   valid alignment.
-    // - We've previously asserted that the length is not too long.
+    let size = INITIAL_N * mem::size_of::<Slot<A>>();
 
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
-
-    // SAFETY:
-    //
-    // - `size` is positive.
-
-    // Note that `alloc_zeroed` initializes all slot hash values to zero.
 
     let a = unsafe { std::alloc::alloc_zeroed(layout) } as *mut Slot<A>;
 
     if a.is_null() { match std::alloc::handle_alloc_error(layout) {} }
 
-    // Inserts into a fresh table. We know that this won't collide!
-
-    let t = unsafe { a.add((1 << (64 - INITIAL_SHIFT)) - 1) };
-    let b = unsafe { a.add(INITIAL_NUM_SLOTS - 1) };
+    let t = unsafe { a.add(INITIAL_D - 1) };
+    let b = unsafe { a.add(INITIAL_N - 1) };
 
     let m = self.mults;
     let h = hash(m, key);
-    let i = spot(INITIAL_SHIFT, h);
-    let p = unsafe { t.sub(i as usize) };
+    let p = unsafe { t.offset(- spot(INITIAL_S, h)) };
 
     unsafe { &mut *p }.hash = h;
     unsafe { &mut *p }.value = MaybeUninit::new(value);
 
     self.table = t;
+    self.space = INITIAL_K - 1;
     self.check = b;
 
     None
@@ -224,72 +204,84 @@ impl<A> HashMapNZ64<A> {
   #[inline(never)]
   #[cold]
   fn insert_cold_grow_table(&mut self) -> Option<A> {
-    let _ = self;
-    /*
     let old_t = self.table;
     let old_s = self.shift;
     let old_k = self.space;
-    let old_l = self.check;
+    let old_b = self.check;
 
-    let new_s;
-    let new_e;
+    // d = 2 ** u
+    // e = 2 ** v
+    // n = d + e
+    //
+    // t = a + d - 1
+    // b = a + n - 1
+
+    let old_u = 64 - old_s;
+    let old_d = 1 << old_u;
+    let old_e = unsafe { old_b.offset_from(old_t) } as usize;
+    let old_v = old_e.trailing_zeros() as usize;
+    let old_n = old_d + old_e;
+    let old_a = unsafe { old_t.sub(old_d - 1) };
+
+    let new_u;
+    let new_v;
     let new_k;
 
     if old_k == 0 {
-      new_s = old_s - 1;
-      new_k = 1 << (64 - old_s - 1);
+      new_u = old_u + 1;
+      new_k = old_d / 2;
     } else {
-      new_s = old_s;
+      new_u = old_u;
       new_k = old_k;
     }
 
-    if unsafe { &*old_l }.hash != 0 {
-      new_e = old_e + 1;
+    if unsafe { &*old_b }.hash != 0 {
+      new_v = old_v + 1;
     } else {
-      new_e = old_e;
+      new_v = old_v;
     }
 
-    let old_n = num_slots(old_s, old_e);
-    let new_n = num_slots(new_s, new_e); // TODO: overflow?
+    assert!(1 <= new_u && new_u <= usize::BITS as usize - 1);
+    assert!(1 <= new_v && new_v <= usize::BITS as usize - 2);
 
-    // TODO: better error?
+    let new_d = 1 << new_u;
+    let new_e = 1 << new_v;
+    let new_n = new_d + new_e;
+    let new_s = 64 - new_u;
 
     assert!(new_n <= isize::MAX as usize / mem::size_of::<Slot<A>>());
 
     let align = mem::align_of::<Slot<A>>();
+
     let old_size = old_n * mem::size_of::<Slot<A>>();
     let new_size = new_n * mem::size_of::<Slot<A>>();
-
-    // SAFETY:
-    //
-    // - ???
 
     let old_layout = unsafe { Layout::from_size_align_unchecked(old_size, align) };
     let new_layout = unsafe { Layout::from_size_align_unchecked(new_size, align) };
 
-    // SAFETY:
-    //
-    // - ???
+    let new_a = unsafe { std::alloc::alloc_zeroed(new_layout) } as *mut Slot<A>;
 
-    let new_t = unsafe { std::alloc::alloc_zeroed(new_layout) } as *mut Slot<A>;
+    if new_a.is_null() { match std::alloc::handle_alloc_error(new_layout) {} }
 
-    if new_t.is_null() { match std::alloc::handle_alloc_error(new_layout) {} }
+    let new_t = unsafe { new_a.add(new_d - 1) };
+    let new_b = unsafe { new_a.add(new_n - 1) };
 
-    let new_l = unsafe { new_t.add(new_n - 1) };
+    let mut j = 0;
 
-    // TODO: initialize new_t
+    for i in 0 .. old_n {
+      let o = unsafe { old_a.add(i).read() };
+      if o.hash == 0 { continue; }
+      j = max(j, (! o.hash >> new_s) as usize);
+      unsafe { new_a.add(j).write(o) };
+      j = j + 1;
+    }
 
     self.table = new_t;
     self.shift = new_s;
     self.space = new_k;
-    self.check = new_l;
+    self.check = new_b;
 
-    // SAFETY:
-    //
-    // - ???
-
-    unsafe { std::alloc::dealloc(old_t as *mut u8, old_layout) };
-    */
+    unsafe { std::alloc::dealloc(old_a as *mut u8, old_layout) };
 
     None
   }
@@ -303,12 +295,11 @@ impl<A> HashMapNZ64<A> {
     let m = self.mults;
     let s = self.shift;
     let h = hash(m, key);
-    let i = spot(s, h);
 
-    let mut p = unsafe { t.sub(i as usize) };
+    let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
 
-    while x > h {
+    while ! (x <= h) {
       p = unsafe { p.add(1) };
       x = unsafe { &*p }.hash;
     }
@@ -317,15 +308,13 @@ impl<A> HashMapNZ64<A> {
 
     let v = unsafe { (&mut *p).value.assume_init_read() };
 
-    let mut i: isize = i;
+    let mut i: isize = unsafe { spot(s, h) };
 
     loop {
       let o = unsafe { p.add(1).read() };
       let x = o.hash;
 
-      if i > spot(s, x) || x == 0 {
-        break; 
-      }
+      if ! (i <= unsafe { spot(s, x) } && x != 0) { break; }
 
       unsafe { p.write(o) };
       
