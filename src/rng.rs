@@ -41,20 +41,18 @@ impl Rng {
 
     let x = u.rotate_right(7) ^ v;
     let y = u ^ u >> 19;
-    let z = u.wrapping_mul(v) ^ umulh(u, v);
-    let z = z.wrapping_add(x);
+    let z = (u.wrapping_mul(v) ^ umulh(u, v)).wrapping_add(x);
 
     let s = (x as u128) | ((y as u128) << 64);
     let s = unsafe { NonZeroU128::new_unchecked(s) };
 
     self.state = s;
-
     z
   }
 
   #[inline]
-  pub fn u64x2(&mut self) -> [u64; 2] {
-    [ self.u64(), self.u64() ]
+  pub fn array_u64<const N: usize>(&mut self) -> [u64; N] {
+    array::from_fn(|_| self.u64())
   }
 }
 
@@ -66,7 +64,7 @@ std::thread_local! {
 // and reads a stale state.
 //
 // So we don't expose this function and instead just use it to implement a few
-// things.
+// other things.
 
 #[inline(always)]
 fn internal_with_thread_local<F, A>(f: F) -> A where F: FnOnce(&mut Rng) -> A {
@@ -87,6 +85,6 @@ pub fn u64() -> u64 {
 }
 
 #[inline]
-pub fn u64x2() -> [u64; 2] {
-  internal_with_thread_local(|g| g.u64x2())
+pub fn array_u64<const N: usize>() -> [u64; N] {
+  internal_with_thread_local(|g| g.array_u64())
 }

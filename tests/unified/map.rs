@@ -10,6 +10,8 @@ fn foo() -> Result<(), std::fmt::Error> {
     t.insert(k, 10 * i);
   }
 
+  writeln!(s, "load = {:#?}", map::internal::load(&t))?;
+
   for &key in t.sorted_keys().iter() {
     assert!(t.contains_key(key));
   }
@@ -21,6 +23,8 @@ fn foo() -> Result<(), std::fmt::Error> {
     }
   }
 
+  writeln!(s, "load = {:#?}", map::internal::load(&t))?;
+
   for &key in t.sorted_keys().iter() {
     assert!(t.contains_key(key));
   }
@@ -28,6 +32,8 @@ fn foo() -> Result<(), std::fmt::Error> {
   writeln!(s, "{:#?}", t)?;
 
   expect![[r#"
+      load = 0.3787878787878788
+      load = 0.1893939393939394
       {
           1: 10,
           3: 30,

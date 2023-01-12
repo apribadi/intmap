@@ -1,7 +1,13 @@
 use crate::prelude::*;
 
+// TODO:
+//
+// - impl From<[(NonZeroU64, A)]>
+// - impl Index<NonZeroU64>
+// - impl IndexMut<NonZeroU64>
+
 pub struct HashMapNZ64<A> {
-  mults: [u64; 2],
+  mixer: Mixer,
   table: *const Slot<A>, // covariant in `A`
   shift: usize,
   space: usize,
@@ -10,6 +16,9 @@ pub struct HashMapNZ64<A> {
 
 unsafe impl<A: Send> Send for HashMapNZ64<A> {}
 unsafe impl<A: Sync> Sync for HashMapNZ64<A> {}
+
+#[derive(Clone, Copy)]
+pub struct Mixer(u64, u64);
 
 struct Slot<A> {
   hash: u64,
@@ -25,17 +34,13 @@ const INITIAL_S: usize = 64 - INITIAL_U;
 const INITIAL_R: usize = INITIAL_D / 2;
 
 #[inline(always)]
-const fn hash(m: [u64; 2], x: NonZeroU64) -> u64 {
-  let a = m[0]; // `m[_]`s should be odd
-  let b = m[1];
-  let x = x.get();
-  let x = x.wrapping_mul(a);
-  let x = x.swap_bytes();
-  let x = x.wrapping_mul(b);
-  x
+const unsafe fn spot(shift: usize, h: u64) -> isize {
+  if ! (shift <= 63) { unsafe { unreachable_unchecked() }; }
+  (h >> shift) as isize 
 }
 
-const fn invert(a: u64) -> u64 {
+#[inline(always)]
+const fn invert_u64(a: u64) -> u64 {
   // https://arxiv.org/abs/2204.04342
 
   let x = a.wrapping_mul(3) ^ 2;
@@ -50,24 +55,37 @@ const fn invert(a: u64) -> u64 {
   x
 }
 
-const fn invert_hash_mults(m: [u64; 2]) -> [u64; 2] {
-  let a = m[0];
-  let b = m[1];
-  let c = a.wrapping_mul(b);
-  let c = invert(c);
-  [ c.wrapping_mul(a), c.wrapping_mul(b) ] // NB: swapped
-}
+impl Mixer {
+  #[inline(always)]
+  pub const fn new(m: [u64; 2]) -> Self {
+    Self(m[0] | 1, m[1] | 1)
+  }
 
-#[inline(always)]
-const unsafe fn spot(shift: usize, h: u64) -> isize {
-  if ! (shift <= 63) { unsafe { unreachable_unchecked() }; }
-  (h >> shift) as isize 
+  #[inline(always)]
+  pub const fn hash(self, x: NonZeroU64) -> NonZeroU64 {
+    let a = self.0;
+    let b = self.1;
+    let x = x.get();
+    let x = x.wrapping_mul(a);
+    let x = x.swap_bytes();
+    let x = x.wrapping_mul(b);
+    unsafe { NonZeroU64::new_unchecked(x) }
+  }
+
+  #[inline(always)]
+  pub const fn invert(self) -> Self {
+    let a = self.0;
+    let b = self.1;
+    let c = invert_u64(a.wrapping_mul(b));
+    Self(c.wrapping_mul(a), c.wrapping_mul(b))
+  }
 }
 
 impl<A> HashMapNZ64<A> {
+  #[inline]
   pub fn new() -> Self {
     Self {
-      mults: rng::u64x2().map(|m| (m | 1)),
+      mixer: Mixer::new(rng::array_u64()),
       table: ptr::null(),
       shift: INITIAL_S,
       space: INITIAL_R,
@@ -75,9 +93,10 @@ impl<A> HashMapNZ64<A> {
     }
   }
 
-  pub fn with_random(rng: &mut Rng) -> Self {
+  #[inline]
+  pub fn new_seeded(rng: &mut Rng) -> Self {
     Self {
-      mults: rng.u64x2().map(|m| (m | 1)),
+      mixer: Mixer::new(rng.array_u64()),
       table: ptr::null(),
       shift: INITIAL_S,
       space: INITIAL_R,
@@ -87,7 +106,10 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   pub fn len(&self) -> usize {
-    (1 << (64 - self.shift - 1)) - self.space
+    let s = self.shift;
+    let r = self.space;
+
+    (1 << (64 - s - 1)) - r
   }
 
   #[inline]
@@ -101,9 +123,9 @@ impl<A> HashMapNZ64<A> {
 
     if t.is_null() { return false; }
 
-    let m = self.mults;
+    let m = self.mixer;
     let s = self.shift;
-    let h = hash(m, key);
+    let h = u64::from(m.hash(key));
 
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
@@ -122,9 +144,9 @@ impl<A> HashMapNZ64<A> {
 
     if t.is_null() { return None; }
 
-    let m = self.mults;
+    let m = self.mixer;
     let s = self.shift;
-    let h = hash(m, key);
+    let h = u64::from(m.hash(key));
 
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
@@ -145,9 +167,9 @@ impl<A> HashMapNZ64<A> {
 
     if t.is_null() { return None; }
 
-    let m = self.mults;
+    let m = self.mixer;
     let s = self.shift;
-    let h = hash(m, key);
+    let h = u64::from(m.hash(key));
 
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
@@ -163,14 +185,22 @@ impl<A> HashMapNZ64<A> {
   }
 
   #[inline]
+  pub fn get_many_mut<const N: usize>(&mut self, keys: [NonZeroU64; N]) -> Option<[&mut A; N]> {
+    let _ = self;
+    let _ = keys;
+
+    unimplemented!()
+  }
+
+  #[inline]
   pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<A> {
     let t = self.table as *mut Slot<A>;
 
     if t.is_null() { return self.insert_cold_init_table(key, value); }
 
-    let m = self.mults;
+    let m = self.mixer;
     let s = self.shift;
-    let h = hash(m, key);
+    let h = u64::from(m.hash(key));
 
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
@@ -220,8 +250,8 @@ impl<A> HashMapNZ64<A> {
     let t = unsafe { a.add(INITIAL_D - 1) };
     let b = unsafe { a.add(INITIAL_N - 1) };
 
-    let m = self.mults;
-    let h = hash(m, key);
+    let m = self.mixer;
+    let h = u64::from(m.hash(key));
     let p = unsafe { t.offset(- spot(INITIAL_S, h)) };
 
     unsafe { &mut *p }.hash = h;
@@ -328,9 +358,9 @@ impl<A> HashMapNZ64<A> {
 
     if t.is_null() { return None; }
 
-    let m = self.mults;
+    let m = self.mixer;
     let s = self.shift;
-    let h = hash(m, key);
+    let h = u64::from(m.hash(key));
 
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
@@ -363,17 +393,20 @@ impl<A> HashMapNZ64<A> {
     Some(v)
   }
 
+  #[inline]
   pub fn clear(&mut self) {
     let t = self.table as *mut Slot<A>;
 
     if t.is_null() { return; }
 
-    let s = self.shift;
-    let b = self.check;
-    let d = 1 << (64 - s);
-    let a = unsafe { t.sub(d - 1) };
-
     if mem::needs_drop::<A>() {
+      // TODO: maintain invariants even if `A::drop` panics.
+
+      let s = self.shift;
+      let b = self.check;
+      let d = 1 << (64 - s);
+      let a = unsafe { t.sub(d - 1) };
+
       each_mut(a, b, |p| {
         if unsafe { &mut *p }.hash != 0 {
           unsafe { &mut *p }.hash = 0;
@@ -381,8 +414,52 @@ impl<A> HashMapNZ64<A> {
         }
       })
     } else {
+      let s = self.shift;
+      let b = self.check;
+      let d = 1 << (64 - s);
+      let a = unsafe { t.sub(d - 1) };
       each_mut(a, b, |p| { unsafe { &mut *p }.hash = 0; })
     }
+  }
+
+  #[inline]
+  pub fn reset(&mut self) {
+    let t = self.table as *mut Slot<A>;
+
+    if t.is_null() { return; }
+
+    let s = self.shift;
+    let b = self.check;
+    let d = 1 << (64 - s);
+    let e = unsafe { b.offset_from(t) } as usize;
+    let n = d + e;
+    let a = unsafe { t.sub(d - 1) };
+
+    // If we're in `Self::drop` and `self` has been subject to scalar
+    // replacement of aggregates, then the following are all dead stores and
+    // should be optimized away.
+
+    self.table = ptr::null();
+    self.shift = INITIAL_S;
+    self.space = INITIAL_R;
+    self.check = ptr::null();
+
+    if mem::needs_drop::<A>() {
+      // We have already placed `self` into a valid configuration, so if
+      // `A::drop` panics we can just leak the table.
+
+      each_mut(a, b, |p| {
+        if unsafe { &mut *p }.hash != 0 {
+          unsafe { (&mut *p).value.assume_init_drop() };
+        }
+      })
+    }
+
+    let align = mem::align_of::<Slot<A>>();
+    let size = n * mem::size_of::<Slot<A>>();
+    let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
+
+    unsafe { std::alloc::dealloc(a as *mut u8, layout) };
   }
 
   pub fn sorted_keys(&self) -> Box<[NonZeroU64]> {
@@ -396,7 +473,8 @@ impl<A> HashMapNZ64<A> {
     let e = unsafe { b.offset_from(t) } as usize;
     let n = d + e;
     let a = unsafe { t.sub(d - 1) };
-    let m = invert_hash_mults(self.mults);
+    let m = self.mixer;
+    let m = m.invert();
 
     let mut r = Vec::with_capacity(n);
 
@@ -404,9 +482,8 @@ impl<A> HashMapNZ64<A> {
       let x = unsafe { &*p }.hash;
       if x != 0 {
         let x = unsafe { NonZeroU64::new_unchecked(x) };
-        let x = hash(m, x);
-        let x = unsafe { NonZeroU64::new_unchecked(x) };
-        r.push(x)
+        let k = m.hash(x);
+        r.push(k)
       }
     });
 
@@ -426,7 +503,8 @@ impl<A> HashMapNZ64<A> {
     let e = unsafe { b.offset_from(t) } as usize;
     let n = d + e;
     let a = unsafe { t.sub(d - 1) };
-    let m = invert_hash_mults(self.mults);
+    let m = self.mixer;
+    let m = m.invert();
 
     let mut r = Vec::with_capacity(n);
 
@@ -434,10 +512,9 @@ impl<A> HashMapNZ64<A> {
       let x = unsafe { &*p }.hash;
       if x != 0 {
         let x = unsafe { NonZeroU64::new_unchecked(x) };
-        let x = hash(m, x);
-        let x = unsafe { NonZeroU64::new_unchecked(x) };
+        let k = m.hash(x);
         let v = unsafe { (&*p).value.assume_init_ref() };
-        r.push((x, v))
+        r.push((k, v))
       }
     });
 
@@ -457,7 +534,8 @@ impl<A> HashMapNZ64<A> {
     let e = unsafe { b.offset_from(t) } as usize;
     let n = d + e;
     let a = unsafe { t.sub(d - 1) };
-    let m = invert_hash_mults(self.mults);
+    let m = self.mixer;
+    let m = m.invert();
 
     let mut r = Vec::with_capacity(n);
 
@@ -465,10 +543,9 @@ impl<A> HashMapNZ64<A> {
       let x = unsafe { &*p }.hash;
       if x != 0 {
         let x = unsafe { NonZeroU64::new_unchecked(x) };
-        let x = hash(m, x);
-        let x = unsafe { NonZeroU64::new_unchecked(x) };
+        let k = m.hash(x);
         let v = unsafe { (&mut *p).value.assume_init_mut() };
-        r.push((x, v))
+        r.push((k, v))
       }
     });
 
@@ -476,13 +553,37 @@ impl<A> HashMapNZ64<A> {
     r.sort_by_key(|a| a.0);
     r
   }
-}
 
-impl<A> Drop for HashMapNZ64<A> {
-  fn drop(&mut self) {
-    let t = self.table as *mut Slot<A>;
+  fn internal_num_slots(&self) -> usize {
+    let t = self.table;
 
-    if t.is_null() { return; }
+    if t.is_null() { return 0; }
+
+    let s = self.shift;
+    let b = self.check;
+    let d = 1 << (64 - s);
+    let e = unsafe { b.offset_from(t) } as usize;
+    let n = d + e;
+    n
+  }
+
+  fn internal_num_bytes(&self) -> usize {
+    self.internal_num_slots() * mem::size_of::<Slot<A>>()
+  }
+
+  fn internal_load(&self) -> f64 {
+    let m = self.len();
+    let n = self.internal_num_slots();
+
+    if n == 0 { return 0.; }
+
+    (m as f64) / (n as f64) 
+  }
+
+  fn internal_allocation_info(&self) -> Option<(NonNull<u8>, Layout)> {
+    let t = self.table;
+
+    if t.is_null() { return None; }
 
     let s = self.shift;
     let b = self.check;
@@ -491,19 +592,18 @@ impl<A> Drop for HashMapNZ64<A> {
     let n = d + e;
     let a = unsafe { t.sub(d - 1) };
 
-    if mem::needs_drop::<A>() {
-      each_mut(a, b, |p| {
-        if unsafe { &*p }.hash != 0 {
-          unsafe { (&mut *p).value.assume_init_drop() };
-        }
-      })
-    }
-
     let align = mem::align_of::<Slot<A>>();
     let size = n * mem::size_of::<Slot<A>>();
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
+    let a = unsafe { NonNull::new_unchecked(a as *mut u8) };
 
-    unsafe { std::alloc::dealloc(a as *mut u8, layout) };
+    Some((a, layout))
+  }
+}
+
+impl<A> Drop for HashMapNZ64<A> {
+  fn drop(&mut self) {
+    self.reset()
   }
 }
 
@@ -517,4 +617,29 @@ impl<A: fmt::Debug> fmt::Debug for HashMapNZ64<A> {
 
     f.finish()
   }
+}
+
+pub mod internal {
+  use crate::prelude::*;
+
+  pub fn num_slots<A>(t: &HashMapNZ64<A>) -> usize {
+    t.internal_num_slots()
+  }
+
+  pub fn num_bytes<A>(t: &HashMapNZ64<A>) -> usize {
+    t.internal_num_bytes()
+  }
+
+  pub fn load<A>(t: &HashMapNZ64<A>) -> f64 {
+    t.internal_load()
+  }
+
+  pub fn allocation_info<A>(t: &HashMapNZ64<A>) -> Option<(NonNull<u8>, Layout)> {
+    t.internal_allocation_info()
+  }
+
+  // TODO:
+  //
+  // - probe length average
+  // - probe histogram
 }
