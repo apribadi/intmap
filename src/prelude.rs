@@ -1,6 +1,7 @@
 pub use core::alloc::Layout;
 pub use core::cell::Cell;
 pub use core::cmp::max;
+pub use core::fmt;
 pub use core::hint::unreachable_unchecked;
 pub use core::mem::MaybeUninit;
 pub use core::mem;
@@ -8,6 +9,7 @@ pub use core::num::NonZeroU128;
 pub use core::num::NonZeroU64;
 pub use core::ptr;
 pub use crate::map::HashMapNZ64;
+pub use crate::rng;
 pub use crate::rng::Rng;
 
 #[inline(always)]

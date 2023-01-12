@@ -68,7 +68,17 @@ const unsafe fn spot(shift: usize, h: u64) -> isize {
 impl<A> HashMapNZ64<A> {
   pub fn new() -> Self {
     Self {
-      mults: Rng::with_thread_local(|g| [g.u64() | 1, g.u64() | 1]),
+      mults: rng::u64x2().map(|m| (m | 1)),
+      table: ptr::null(),
+      shift: INITIAL_S,
+      space: INITIAL_R,
+      check: ptr::null(),
+    }
+  }
+
+  pub fn with_random(rng: &mut Rng) -> Self {
+    Self {
+      mults: rng.u64x2().map(|m| (m | 1)),
       table: ptr::null(),
       shift: INITIAL_S,
       space: INITIAL_R,
@@ -230,7 +240,7 @@ impl<A> HashMapNZ64<A> {
   fn insert_cold_grow_table(&mut self) -> Option<A> {
     let old_t = self.table as *mut Slot<A>;
     let old_s = self.shift;
-    let old_k = self.space;
+    let old_r = self.space;
     let old_b = self.check;
 
     // d = 2 ** u
@@ -249,14 +259,14 @@ impl<A> HashMapNZ64<A> {
 
     let new_u;
     let new_v;
-    let new_k;
+    let new_r;
 
-    if old_k == 0 {
+    if old_r == 0 {
       new_u = old_u + 1;
-      new_k = old_d / 2;
+      new_r = old_d / 2;
     } else {
       new_u = old_u;
-      new_k = old_k;
+      new_r = old_r;
     }
 
     if unsafe { &*old_b }.hash != 0 {
@@ -308,7 +318,7 @@ impl<A> HashMapNZ64<A> {
 
     self.table = new_t;
     self.shift = new_s;
-    self.space = new_k;
+    self.space = new_r;
     self.check = new_b;
 
     unsafe { std::alloc::dealloc(old_a as *mut u8, old_layout) };
@@ -338,19 +348,16 @@ impl<A> HashMapNZ64<A> {
 
     let v = unsafe { (&mut *p).value.assume_init_read() };
 
-    let mut i: isize = unsafe { spot(s, h) };
-
     loop {
       let q = unsafe { p.add(1) };
       let x = unsafe { &*q }.hash;
 
-      if ! (i <= unsafe { spot(s, x) } && x != 0) { break; }
+      if p < unsafe { t.offset(- spot(s, x)) } || x == 0 { break; }
 
       unsafe { &mut *p }.hash = x;
       unsafe { &mut *p }.value = MaybeUninit::new(unsafe { (&*q).value.assume_init_read() });
 
       p = q;
-      i = i - 1;
     }
 
     unsafe { &mut *p }.hash = 0;
@@ -501,5 +508,17 @@ impl<A> Drop for HashMapNZ64<A> {
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
     unsafe { std::alloc::dealloc(a as *mut u8, layout) };
+  }
+}
+
+impl<A: fmt::Debug> fmt::Debug for HashMapNZ64<A> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    let mut f = f.debug_map();
+
+    for (key, value) in self.items_sorted_by_key().iter() {
+      f.entry(key, value);
+    }
+
+    f.finish()
   }
 }

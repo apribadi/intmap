@@ -21,7 +21,7 @@ fn get_system_seed() -> NonZeroU128 {
 }
 
 impl Rng {
-  #[inline] 
+  #[inline]
   pub const fn new(seed: NonZeroU128) -> Self {
     Self { state: seed }
   }
@@ -31,7 +31,7 @@ impl Rng {
     self.state
   }
 
-  #[inline] 
+  #[inline]
   pub fn u64(&mut self) -> u64 {
     let s = self.state;
 
@@ -53,19 +53,40 @@ impl Rng {
   }
 
   #[inline]
-  pub fn with_thread_local<F, A>(f: F) -> A where F: FnOnce(&mut Self) -> A {
-    THREAD_LOCAL.with(|t| {
-      let s = t.get();
-      let s = NonZeroU128::new(s).unwrap_or_else(|| get_system_seed());
-      let mut g = Self::new(s);
-      let a = f(&mut g);
-      let s = u128::from(g.state());
-      t.set(s);
-      a
-    })
+  pub fn u64x2(&mut self) -> [u64; 2] {
+    [ self.u64(), self.u64() ]
   }
 }
 
 std::thread_local! {
   static THREAD_LOCAL: Cell<u128> = const { Cell::new(0) };
+}
+
+// NB: This function doesn't check whether `f` itself calls `with_thread_local`
+// and reads a stale state.
+//
+// So we don't expose this function and instead just use it to implement a few
+// things.
+
+#[inline(always)]
+fn internal_with_thread_local<F, A>(f: F) -> A where F: FnOnce(&mut Rng) -> A {
+  THREAD_LOCAL.with(|t| {
+    let s = t.get();
+    let s = NonZeroU128::new(s).unwrap_or_else(|| get_system_seed());
+    let mut g = Rng::new(s);
+    let a = f(&mut g);
+    let s = u128::from(g.state());
+    t.set(s);
+    a
+  })
+}
+
+#[inline]
+pub fn u64() -> u64 {
+  internal_with_thread_local(|g| g.u64())
+}
+
+#[inline]
+pub fn u64x2() -> [u64; 2] {
+  internal_with_thread_local(|g| g.u64x2())
 }

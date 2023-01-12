@@ -1,6 +1,6 @@
 mod prelude;
-mod rng;
 pub mod map;
+pub mod rng;
 pub mod set;
 
 use core::num::NonZeroU64;
