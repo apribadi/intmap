@@ -8,8 +8,8 @@ pub struct HashMapNZ64<A> {
   check: *const Slot<A>,
 }
 
-unsafe impl<A : Send> Send for HashMapNZ64<A> {}
-unsafe impl<A : Sync> Sync for HashMapNZ64<A> {}
+unsafe impl<A: Send> Send for HashMapNZ64<A> {}
+unsafe impl<A: Sync> Sync for HashMapNZ64<A> {}
 
 struct Slot<A> {
   hash: u64,
@@ -35,10 +35,9 @@ const fn hash(m: [u64; 2], x: NonZeroU64) -> u64 {
   x
 }
 
-const fn invert(x: u64) -> u64 {
+const fn invert(a: u64) -> u64 {
   // https://arxiv.org/abs/2204.04342
 
-  let a = x;
   let x = a.wrapping_mul(3) ^ 2;
   let y = 1u64.wrapping_sub(a.wrapping_mul(x));
   let x = x.wrapping_mul(y.wrapping_add(1));
@@ -51,12 +50,12 @@ const fn invert(x: u64) -> u64 {
   x
 }
 
-const fn invert_hash_mults(x: [u64; 2]) -> [u64; 2] {
-  let a = x[0];
-  let b = x[1];
+const fn invert_hash_mults(m: [u64; 2]) -> [u64; 2] {
+  let a = m[0];
+  let b = m[1];
   let c = a.wrapping_mul(b);
   let c = invert(c);
-  [ c.wrapping_mul(a), c.wrapping_mul(b) ]
+  [ c.wrapping_mul(a), c.wrapping_mul(b) ] // NB: swapped
 }
 
 #[inline(always)]
@@ -247,8 +246,8 @@ impl<A> HashMapNZ64<A> {
     // e = 2 ** v
     // n = d + e
     //
-    // t = a + d - 1
-    // b = a + n - 1
+    // t = a + (d - 1)
+    // b = a + (n - 1)
 
     let old_u = 64 - old_s;
     let old_d = 1 << old_u;
@@ -275,13 +274,10 @@ impl<A> HashMapNZ64<A> {
       new_v = old_v;
     }
 
-    assert!(1 <= new_u && new_u <= usize::BITS as usize - 1 && new_u <= 64);
-    assert!(1 <= new_v && new_v <= usize::BITS as usize - 2);
+    assert!(new_u <= usize::BITS as usize - 1 && new_u <= 64);
+    assert!(new_v <= usize::BITS as usize - 2);
 
     let new_s = 64 - new_u;
-
-    assert!(new_s <= 63);
-
     let new_d = 1 << new_u;
     let new_e = 1 << new_v;
     let new_n = new_d + new_e;

@@ -32,4 +32,21 @@ impl HashSetNZ64 {
   pub fn clear(&mut self) {
     self.0.clear()
   }
+
+  #[inline]
+  pub fn sorted_keys(&self) -> Box<[NonZeroU64]> {
+    self.0.sorted_keys()
+  }
+}
+
+impl fmt::Debug for HashSetNZ64 {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    let mut f = f.debug_set();
+
+    for key in self.sorted_keys().iter() {
+      f.entry(key);
+    }
+
+    f.finish()
+  }
 }
