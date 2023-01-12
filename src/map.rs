@@ -22,7 +22,7 @@ const INITIAL_D: usize = 1 << INITIAL_U;
 const INITIAL_E: usize = 1 << INITIAL_V;
 const INITIAL_N: usize = INITIAL_D + INITIAL_E;
 const INITIAL_S: usize = 64 - INITIAL_U;
-const INITIAL_K: usize = INITIAL_D / 2;
+const INITIAL_R: usize = INITIAL_D / 2;
 
 #[inline(always)]
 const fn hash(m: [u64; 2], x: NonZeroU64) -> u64 {
@@ -33,6 +33,30 @@ const fn hash(m: [u64; 2], x: NonZeroU64) -> u64 {
   let x = x.swap_bytes();
   let x = x.wrapping_mul(b);
   x
+}
+
+const fn invert(x: u64) -> u64 {
+  // https://arxiv.org/abs/2204.04342
+
+  let a = x;
+  let x = a.wrapping_mul(3) ^ 2;
+  let y = 1u64.wrapping_sub(a.wrapping_mul(x));
+  let x = x.wrapping_mul(y.wrapping_add(1));
+  let y = y.wrapping_mul(y);
+  let x = x.wrapping_mul(y.wrapping_add(1));
+  let y = y.wrapping_mul(y);
+  let x = x.wrapping_mul(y.wrapping_add(1));
+  let y = y.wrapping_mul(y);
+  let x = x.wrapping_mul(y.wrapping_add(1));
+  x
+}
+
+const fn invert_hash_mults(x: [u64; 2]) -> [u64; 2] {
+  let a = x[0];
+  let b = x[1];
+  let c = a.wrapping_mul(b);
+  let c = invert(c);
+  [ c.wrapping_mul(a), c.wrapping_mul(b) ]
 }
 
 #[inline(always)]
@@ -47,7 +71,7 @@ impl<A> HashMapNZ64<A> {
       mults: Rng::with_thread_local(|g| [g.u64() | 1, g.u64() | 1]),
       table: ptr::null(),
       shift: INITIAL_S,
-      space: INITIAL_K,
+      space: INITIAL_R,
       check: ptr::null(),
     }
   }
@@ -75,7 +99,7 @@ impl<A> HashMapNZ64<A> {
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
 
-    while ! (x <= h) {
+    while x > h {
       p = unsafe { p.add(1) };
       x = unsafe { &*p }.hash;
     }
@@ -96,7 +120,7 @@ impl<A> HashMapNZ64<A> {
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
 
-    while ! (x <= h) {
+    while x > h {
       p = unsafe { p.add(1) };
       x = unsafe { &*p }.hash;
     }
@@ -119,7 +143,7 @@ impl<A> HashMapNZ64<A> {
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
 
-    while ! (x <= h) {
+    while x > h {
       p = unsafe { p.add(1) };
       x = unsafe { &*p }.hash;
     }
@@ -142,7 +166,7 @@ impl<A> HashMapNZ64<A> {
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
 
-    while ! (x <= h) {
+    while x > h {
       p = unsafe { p.add(1) };
       x = unsafe { &*p }.hash;
     }
@@ -160,12 +184,12 @@ impl<A> HashMapNZ64<A> {
       o = unsafe { p.replace(o) };
     }
 
-    let k = self.space - 1;
-    self.space = k;
+    let r = self.space - 1;
+    self.space = r;
 
     let b = self.check;
 
-    if k == 0 || ptr::eq(p, b) { return self.insert_cold_grow_table(); }
+    if r == 0 || ptr::eq(p, b) { return self.insert_cold_grow_table(); }
 
     None
   }
@@ -195,7 +219,7 @@ impl<A> HashMapNZ64<A> {
     unsafe { &mut *p }.value = MaybeUninit::new(value);
 
     self.table = t;
-    self.space = INITIAL_K - 1;
+    self.space = INITIAL_R - 1;
     self.check = b;
 
     None
@@ -204,7 +228,7 @@ impl<A> HashMapNZ64<A> {
   #[inline(never)]
   #[cold]
   fn insert_cold_grow_table(&mut self) -> Option<A> {
-    let old_t = self.table;
+    let old_t = self.table as *mut Slot<A>;
     let old_s = self.shift;
     let old_k = self.space;
     let old_b = self.check;
@@ -241,7 +265,7 @@ impl<A> HashMapNZ64<A> {
       new_v = old_v;
     }
 
-    assert!(1 <= new_u && new_u <= usize::BITS as usize - 1);
+    assert!(1 <= new_u && new_u <= usize::BITS as usize - 1 && new_u <= 64);
     assert!(1 <= new_v && new_v <= usize::BITS as usize - 2);
 
     let new_s = 64 - new_u;
@@ -271,13 +295,16 @@ impl<A> HashMapNZ64<A> {
 
     let mut j = 0;
 
-    for i in 0 .. old_n {
-      let o = unsafe { old_a.add(i).read() };
-      if o.hash == 0 { continue; }
-      j = max(j, (! o.hash >> new_s) as usize);
-      unsafe { new_a.add(j).write(o) };
-      j = j + 1;
-    }
+    each_mut(old_a, old_b, |p| {
+      let x = unsafe { &*p }.hash;
+      if x != 0 {
+        j = max(j, (! x >> new_s) as usize);
+        let q = unsafe { new_a.add(j) };
+        unsafe { &mut *q }.hash = x;
+        unsafe { &mut *q }.value = MaybeUninit::new(unsafe { (&*p).value.assume_init_read() });
+        j = j + 1;
+      }
+    });
 
     self.table = new_t;
     self.shift = new_s;
@@ -302,7 +329,7 @@ impl<A> HashMapNZ64<A> {
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
 
-    while ! (x <= h) {
+    while x > h {
       p = unsafe { p.add(1) };
       x = unsafe { &*p }.hash;
     }
@@ -314,14 +341,15 @@ impl<A> HashMapNZ64<A> {
     let mut i: isize = unsafe { spot(s, h) };
 
     loop {
-      let o = unsafe { p.add(1).read() };
-      let x = o.hash;
+      let q = unsafe { p.add(1) };
+      let x = unsafe { &*q }.hash;
 
       if ! (i <= unsafe { spot(s, x) } && x != 0) { break; }
 
-      unsafe { p.write(o) };
-      
-      p = unsafe { p.add(1) };
+      unsafe { &mut *p }.hash = x;
+      unsafe { &mut *p }.value = MaybeUninit::new(unsafe { (&*q).value.assume_init_read() });
+
+      p = q;
       i = i - 1;
     }
 
@@ -339,21 +367,111 @@ impl<A> HashMapNZ64<A> {
 
     let s = self.shift;
     let b = self.check;
-    let a = unsafe { t.sub((1 << (64 - s)) - 1) };
-    let n = unsafe { b.offset_from(a) } as usize + 1;
+    let d = 1 << (64 - s);
+    let a = unsafe { t.sub(d - 1) };
 
     if mem::needs_drop::<A>() {
-      for p in (0 .. n).map(|i| unsafe { a.add(i) }) {
+      each_mut(a, b, |p| {
         if unsafe { &mut *p }.hash != 0 {
           unsafe { &mut *p }.hash = 0;
           unsafe { (&mut *p).value.assume_init_drop() };
         }
-      }
+      })
     } else {
-      for p in (0 .. n).map(|i| unsafe { a.add(i) }) {
-        unsafe { &mut *p }.hash = 0;
-      }
+      each_mut(a, b, |p| { unsafe { &mut *p }.hash = 0; })
     }
+  }
+
+  pub fn sorted_keys(&self) -> Box<[NonZeroU64]> {
+    let t = self.table;
+
+    if t.is_null() { return Box::from([]); }
+
+    let s = self.shift;
+    let b = self.check;
+    let d = 1 << (64 - s);
+    let e = unsafe { b.offset_from(t) } as usize;
+    let n = d + e;
+    let a = unsafe { t.sub(d - 1) };
+    let m = invert_hash_mults(self.mults);
+
+    let mut r = Vec::with_capacity(n);
+
+    each(a, b, |p| { 
+      let x = unsafe { &*p }.hash;
+      if x != 0 {
+        let x = unsafe { NonZeroU64::new_unchecked(x) };
+        let x = hash(m, x);
+        let x = unsafe { NonZeroU64::new_unchecked(x) };
+        r.push(x)
+      }
+    });
+
+    let mut r = r.into_boxed_slice();
+    r.sort();
+    r
+  }
+
+  pub fn items_sorted_by_key(&self) -> Box<[(NonZeroU64, &A)]> {
+    let t = self.table;
+
+    if t.is_null() { return Box::from([]); }
+
+    let s = self.shift;
+    let b = self.check;
+    let d = 1 << (64 - s);
+    let e = unsafe { b.offset_from(t) } as usize;
+    let n = d + e;
+    let a = unsafe { t.sub(d - 1) };
+    let m = invert_hash_mults(self.mults);
+
+    let mut r = Vec::with_capacity(n);
+
+    each(a, b, |p| { 
+      let x = unsafe { &*p }.hash;
+      if x != 0 {
+        let x = unsafe { NonZeroU64::new_unchecked(x) };
+        let x = hash(m, x);
+        let x = unsafe { NonZeroU64::new_unchecked(x) };
+        let v = unsafe { (&*p).value.assume_init_ref() };
+        r.push((x, v))
+      }
+    });
+
+    let mut r = r.into_boxed_slice();
+    r.sort_by_key(|a| a.0);
+    r
+  }
+
+  pub fn items_sorted_by_key_mut(&mut self) -> Box<[(NonZeroU64, &mut A)]> {
+    let t = self.table as *mut Slot<A>;
+
+    if t.is_null() { return Box::from([]); }
+
+    let s = self.shift;
+    let b = self.check;
+    let d = 1 << (64 - s);
+    let e = unsafe { b.offset_from(t) } as usize;
+    let n = d + e;
+    let a = unsafe { t.sub(d - 1) };
+    let m = invert_hash_mults(self.mults);
+
+    let mut r = Vec::with_capacity(n);
+
+    each_mut(a, b, |p| { 
+      let x = unsafe { &*p }.hash;
+      if x != 0 {
+        let x = unsafe { NonZeroU64::new_unchecked(x) };
+        let x = hash(m, x);
+        let x = unsafe { NonZeroU64::new_unchecked(x) };
+        let v = unsafe { (&mut *p).value.assume_init_mut() };
+        r.push((x, v))
+      }
+    });
+
+    let mut r = r.into_boxed_slice();
+    r.sort_by_key(|a| a.0);
+    r
   }
 }
 
@@ -365,15 +483,17 @@ impl<A> Drop for HashMapNZ64<A> {
 
     let s = self.shift;
     let b = self.check;
-    let a = unsafe { t.sub((1 << (64 - s)) - 1) };
-    let n = unsafe { b.offset_from(a) } as usize + 1;
+    let d = 1 << (64 - s);
+    let e = unsafe { b.offset_from(t) } as usize;
+    let n = d + e;
+    let a = unsafe { t.sub(d - 1) };
 
     if mem::needs_drop::<A>() {
-      for p in (0 .. n).map(|i| unsafe { a.add(i) }) {
+      each_mut(a, b, |p| {
         if unsafe { &*p }.hash != 0 {
           unsafe { (&mut *p).value.assume_init_drop() };
         }
-      }
+      })
     }
 
     let align = mem::align_of::<Slot<A>>();

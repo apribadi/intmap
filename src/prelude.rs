@@ -9,3 +9,13 @@ pub use core::num::NonZeroU64;
 pub use core::ptr;
 pub use crate::map::HashMapNZ64;
 pub use crate::rng::Rng;
+
+#[inline(always)]
+pub fn each<A, F>(mut p: *const A, q: *const A, mut f: F) where F: FnMut(*const A) -> () {
+  loop { f(p); if ptr::eq(p, q) { break; } p = p.wrapping_add(1); }
+}
+
+#[inline(always)]
+pub fn each_mut<A, F>(mut p: *mut A, q: *const A, mut f: F) where F: FnMut(*mut A) -> () {
+  loop { f(p); if ptr::eq(p, q) { break; } p = p.wrapping_add(1); }
+}

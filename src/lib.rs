@@ -15,6 +15,14 @@ pub fn std_get(t: &HashMap<NonZeroU64, u64>, x: NonZeroU64) -> Option<&u64> {
   t.get(&x)
 }
 
+pub fn std_insert(t: &mut HashMap<NonZeroU64, u64>, x: NonZeroU64, y: u64) -> Option<u64> {
+  t.insert(x, y)
+}
+
+pub fn std_remove(t: &mut HashMap<NonZeroU64, u64>, x: NonZeroU64) -> Option<u64> {
+  t.remove(&x)
+}
+
 pub fn nz_contains_key(t: &HashMapNZ64<u64>, x: NonZeroU64) -> bool {
   t.contains_key(x)
 }
