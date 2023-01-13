@@ -25,38 +25,38 @@ struct Slot<A> {
 
 #[derive(Clone)]
 pub struct Iter<'a, A: 'a> {
-  invert: Mixer,
+  mixer: Mixer,
   len: usize,
   ptr: *const Slot<A>,
-  marker: PhantomData<&'a HashMapNZ64<A>>,
+  variance: PhantomData<&'a A>,
 }
 
 pub struct IterMut<'a, A: 'a> {
-  invert: Mixer,
+  mixer: Mixer,
   len: usize,
   ptr: *mut Slot<A>,
-  marker: PhantomData<&'a mut HashMapNZ64<A>>,
+  variance: PhantomData<&'a mut A>,
 }
 
 #[derive(Clone)]
 pub struct Keys<'a, A: 'a> {
-  invert: Mixer,
+  mixer: Mixer,
   len: usize,
   ptr: *const Slot<A>,
-  marker: PhantomData<&'a HashMapNZ64<A>>,
+  variance: PhantomData<&'a A>,
 }
 
 #[derive(Clone)]
 pub struct Values<'a, A: 'a> {
   len: usize,
   ptr: *const Slot<A>,
-  marker: PhantomData<&'a HashMapNZ64<A>>,
+  variance: PhantomData<&'a A>,
 }
 
 pub struct ValuesMut<'a, A: 'a> {
   len: usize,
   ptr: *mut Slot<A>,
-  marker: PhantomData<&'a mut HashMapNZ64<A>>,
+  variance: PhantomData<&'a mut A>,
 }
 
 impl<'a, A> FusedIterator for Iter<'a, A> {}
@@ -86,7 +86,7 @@ const unsafe fn spot(shift: usize, h: u64) -> isize {
 }
 
 #[inline(always)]
-const fn invert_u64(a: u64) -> u64 {
+const fn invert(a: u64) -> u64 {
   // https://arxiv.org/abs/2204.04342
 
   let x = a.wrapping_mul(3) ^ 2;
@@ -103,8 +103,10 @@ const fn invert_u64(a: u64) -> u64 {
 
 impl Mixer {
   #[inline(always)]
-  const fn new(m: [u64; 2]) -> Self {
-    Self(m[0] | 1, m[1] | 1)
+  const fn new(m: u64) -> Self {
+    let a = m | 1;
+    let b = invert(a);
+    Self(a, b)
   }
 
   #[inline(always)]
@@ -117,14 +119,6 @@ impl Mixer {
     let x = x.wrapping_mul(b);
     unsafe { NonZeroU64::new_unchecked(x) }
   }
-
-  #[inline(always)]
-  const fn invert(self) -> Self {
-    let a = self.0;
-    let b = self.1;
-    let c = invert_u64(a.wrapping_mul(b));
-    Self(c.wrapping_mul(a), c.wrapping_mul(b))
-  }
 }
 
 impl<A> HashMapNZ64<A> {
@@ -134,7 +128,7 @@ impl<A> HashMapNZ64<A> {
   #[inline]
   pub fn new() -> Self {
     Self {
-      mixer: Mixer::new(rng::array_u64()),
+      mixer: Mixer::new(rng::u64()),
       table: ptr::null(),
       shift: INITIAL_S,
       space: INITIAL_R,
@@ -148,7 +142,7 @@ impl<A> HashMapNZ64<A> {
   #[inline]
   pub fn new_seeded(rng: &mut Rng) -> Self {
     Self {
-      mixer: Mixer::new(rng.array_u64()),
+      mixer: Mixer::new(rng.u64()),
       table: ptr::null(),
       shift: INITIAL_S,
       space: INITIAL_R,
@@ -258,6 +252,10 @@ impl<A> HashMapNZ64<A> {
 
   /// Inserts the given key and value into the map. Returns the previous value
   /// associated with given key, if one was present.
+  ///
+  /// # Panics
+  ///
+  /// Panics if ...
 
   #[inline]
   pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<A> {
@@ -338,6 +336,10 @@ impl<A> HashMapNZ64<A> {
   #[inline(never)]
   #[cold]
   fn insert_cold_grow_table(&mut self) {
+    // TODO:
+    //
+    // Preserve invariants even if an assertion fails.
+
     let old_t = self.table as *mut Slot<A>;
     let old_s = self.shift;
     let old_r = self.space;
@@ -405,10 +407,11 @@ impl<A> HashMapNZ64<A> {
     each_mut(old_a, old_b, |p| {
       let x = unsafe { &*p }.hash;
       if x != 0 {
+        let v = unsafe { (&*p).value.assume_init_read() };
         j = max(j, (! x >> new_s) as usize);
         let q = unsafe { new_a.add(j) };
         unsafe { &mut *q }.hash = x;
-        unsafe { &mut *q }.value = MaybeUninit::new(unsafe { (&*p).value.assume_init_read() });
+        unsafe { &mut *q }.value = MaybeUninit::new(v);
         j = j + 1;
       }
     });
@@ -474,7 +477,9 @@ impl<A> HashMapNZ64<A> {
     if t.is_null() { return; }
 
     if mem::needs_drop::<A>() {
-      // TODO: maintain invariants even if `A::drop` panics.
+      // TODO:
+      //
+      // Preserve invariants even if `A::drop` panics.
 
       let s = self.shift;
       let b = self.check;
@@ -543,62 +548,31 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   pub fn iter(&self) -> Iter<'_, A> {
+    let m = self.mixer;
+    let t = self.table;
     let s = self.shift;
     let r = self.space;
-
     let k = (1 << (64 - s - 1)) - r;
-
-    if k == 0 {
-      return Iter {
-        invert: Mixer::new([1, 1]),
-        len: 0,
-        ptr: ptr::null(),
-        marker: PhantomData,
-      };
-    }
-
-    let t = self.table;
-    let m = self.mixer;
     let d = 1 << (64 - s);
-    let a = unsafe { t.sub(d - 1) };
+    let p = if t.is_null() { ptr::null() } else { unsafe { t.sub(d - 1) } };
 
-    Iter {
-      invert: m.invert(),
-      len: k,
-      ptr: a,
-      marker: PhantomData,
-    }
+    Iter { mixer: m, len: k, ptr: p, variance: PhantomData }
   }
 
   /// Returns an iterator yielding each key and a mutable reference to its
   /// associated value. The iterator item type is `(NonZeroU64, &'_ mut A)`.
 
   #[inline]
-  pub fn iter_mut(&mut self) -> IterMut<'_, A> { let s = self.shift;
-    let r = self.space;
-
-    let k = (1 << (64 - s - 1)) - r;
-
-    if k == 0 {
-      return IterMut {
-        invert: Mixer::new([1, 1]),
-        len: 0,
-        ptr: ptr::null_mut(),
-        marker: PhantomData,
-      };
-    }
-
-    let t = self.table as *mut Slot<A>;
+  pub fn iter_mut(&mut self) -> IterMut<'_, A> {
     let m = self.mixer;
+    let t = self.table as *mut Slot<A>;
+    let s = self.shift;
+    let r = self.space;
+    let k = (1 << (64 - s - 1)) - r;
     let d = 1 << (64 - s);
-    let a = unsafe { t.sub(d - 1) };
+    let p = if t.is_null() { ptr::null_mut() } else { unsafe { t.sub(d - 1) } };
 
-    IterMut {
-      invert: m.invert(),
-      len: k,
-      ptr: a,
-      marker: PhantomData,
-    }
+    IterMut { mixer: m, len: k, ptr: p, variance: PhantomData }
   }
 
   /// Returns an iterator yielding each key. The iterator item type is
@@ -606,31 +580,15 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   pub fn keys(&self) -> Keys<'_, A> {
+    let m = self.mixer;
+    let t = self.table;
     let s = self.shift;
     let r = self.space;
-
     let k = (1 << (64 - s - 1)) - r;
-
-    if k == 0 {
-      return Keys {
-        invert: Mixer::new([1, 1]),
-        len: 0,
-        ptr: ptr::null(),
-        marker: PhantomData,
-      };
-    }
-
-    let t = self.table;
-    let m = self.mixer;
     let d = 1 << (64 - s);
-    let a = unsafe { t.sub(d - 1) };
+    let p = if t.is_null() { ptr::null() } else { unsafe { t.sub(d - 1) } };
 
-    Keys {
-      invert: m.invert(),
-      len: k,
-      ptr: a,
-      marker: PhantomData,
-    }
+    Keys { mixer: m, len: k, ptr: p, variance: PhantomData }
   }
 
   /// Returns an iterator yielding a reference to each value. The iterator item
@@ -638,28 +596,14 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   pub fn values(&self) -> Values<'_, A> {
+    let t = self.table;
     let s = self.shift;
     let r = self.space;
-
     let k = (1 << (64 - s - 1)) - r;
-
-    if k == 0 {
-      return Values {
-        len: 0,
-        ptr: ptr::null(),
-        marker: PhantomData,
-      };
-    }
-
-    let t = self.table;
     let d = 1 << (64 - s);
-    let a = unsafe { t.sub(d - 1) };
+    let p = if t.is_null() { ptr::null() } else { unsafe { t.sub(d - 1) } };
 
-    Values {
-      len: k,
-      ptr: a,
-      marker: PhantomData,
-    }
+    Values { len: k, ptr: p, variance: PhantomData }
   }
 
   /// Returns an iterator yielding a mutable reference to each value. The
@@ -667,28 +611,14 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   pub fn values_mut(&mut self) -> ValuesMut<'_, A> {
+    let t = self.table as *mut Slot<A>;
     let s = self.shift;
     let r = self.space;
-
     let k = (1 << (64 - s - 1)) - r;
-
-    if k == 0 {
-      return ValuesMut {
-        len: 0,
-        ptr: ptr::null_mut(),
-        marker: PhantomData,
-      };
-    }
-
-    let t = self.table as *mut Slot<A>;
     let d = 1 << (64 - s);
-    let a = unsafe { t.sub(d - 1) };
+    let p = if t.is_null() { ptr::null_mut() } else { unsafe { t.sub(d - 1) } };
 
-    ValuesMut {
-      len: k,
-      ptr: a,
-      marker: PhantomData,
-    }
+    ValuesMut { len: k, ptr: p, variance: PhantomData }
   }
 
   #[inline]
@@ -712,12 +642,12 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   fn internal_load(&self) -> f64 {
-    let m = self.len();
+    let k = self.len();
     let n = self.internal_num_slots();
 
     if n == 0 { return 0.; }
 
-    (m as f64) / (n as f64) 
+    (k as f64) / (n as f64) 
   }
 
   #[inline]
@@ -810,7 +740,7 @@ impl<'a, A> Iterator for Iter<'a, A> {
       x = unsafe { &*p }.hash;
     }
 
-    let m = self.invert;
+    let m = self.mixer;
     let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
     let v = unsafe { (&*p).value.assume_init_ref() };
 
@@ -843,7 +773,7 @@ impl<'a, A> Iterator for IterMut<'a, A> {
       x = unsafe { &*p }.hash;
     }
 
-    let m = self.invert;
+    let m = self.mixer;
     let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
     let v = unsafe { (&mut *p).value.assume_init_mut() };
 
@@ -876,7 +806,7 @@ impl<'a, A> Iterator for Keys<'a, A> {
       x = unsafe { &*p }.hash;
     }
 
-    let m = self.invert;
+    let m = self.mixer;
     let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
 
     self.ptr = unsafe { p.add(1) };
@@ -977,9 +907,4 @@ pub mod internal {
   pub fn allocation_info<A>(t: &HashMapNZ64<A>) -> Option<(NonNull<u8>, Layout)> {
     t.internal_allocation_info()
   }
-
-  // TODO:
-  //
-  // - probe length average
-  // - probe histogram
 }

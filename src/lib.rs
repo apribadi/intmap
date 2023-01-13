@@ -44,3 +44,7 @@ pub fn nz_insert(t: &mut HashMapNZ64<u64>, x: NonZeroU64, v: u64) -> Option<u64>
 pub fn nz_remove(t: &mut HashMapNZ64<u64>, x: NonZeroU64) -> Option<u64> {
   t.remove(x)
 }
+
+pub fn nz_iter(t: &HashMapNZ64<u64>) -> map::Iter<'_, u64> {
+  t.iter()
+}
