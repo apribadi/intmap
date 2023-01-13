@@ -47,13 +47,9 @@ impl HashSetNZ64 {
   pub fn reset(&mut self) {
     self.0.reset()
   }
-
-  #[inline]
-  pub fn sorted(&self) -> Box<[NonZeroU64]> {
-    self.0.sorted_keys()
-  }
 }
 
+/*
 impl fmt::Debug for HashSetNZ64 {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
     let mut f = f.debug_set();
@@ -65,3 +61,4 @@ impl fmt::Debug for HashSetNZ64 {
     f.finish()
   }
 }
+*/

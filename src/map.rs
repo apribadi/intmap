@@ -1,10 +1,8 @@
+//! This module implements a fast hash map keyed by `NonZeroU64`s.
+
 use crate::prelude::*;
 
-// TODO:
-//
-// - impl From<[(NonZeroU64, A)]>
-// - impl Index<NonZeroU64>
-// - impl IndexMut<NonZeroU64>
+/// A fast hash map keyed by `NonZeroU64`s.
 
 pub struct HashMapNZ64<A> {
   mixer: Mixer,
@@ -17,8 +15,56 @@ pub struct HashMapNZ64<A> {
 unsafe impl<A: Send> Send for HashMapNZ64<A> {}
 unsafe impl<A: Sync> Sync for HashMapNZ64<A> {}
 
+#[derive(Clone)]
+pub struct Iter<'a, A: 'a> {
+  invert: Mixer,
+  len: usize,
+  ptr: *const Slot<A>,
+  marker: PhantomData<&'a HashMapNZ64<A>>,
+}
+
+pub struct IterMut<'a, A: 'a> {
+  invert: Mixer,
+  len: usize,
+  ptr: *mut Slot<A>,
+  marker: PhantomData<&'a mut HashMapNZ64<A>>,
+}
+
+#[derive(Clone)]
+pub struct Keys<'a, A: 'a> {
+  invert: Mixer,
+  len: usize,
+  ptr: *const Slot<A>,
+  marker: PhantomData<&'a HashMapNZ64<A>>,
+}
+
+#[derive(Clone)]
+pub struct Values<'a, A: 'a> {
+  len: usize,
+  ptr: *const Slot<A>,
+  marker: PhantomData<&'a HashMapNZ64<A>>,
+}
+
+pub struct ValuesMut<'a, A: 'a> {
+  len: usize,
+  ptr: *mut Slot<A>,
+  marker: PhantomData<&'a mut HashMapNZ64<A>>,
+}
+
+impl<'a, A> FusedIterator for Iter<'a, A> {}
+impl<'a, A> FusedIterator for IterMut<'a, A> {}
+impl<'a, A> FusedIterator for Keys<'a, A> {}
+impl<'a, A> FusedIterator for Values<'a, A> {}
+impl<'a, A> FusedIterator for ValuesMut<'a, A> {}
+
+impl<'a, A> ExactSizeIterator for Iter<'a, A> {}
+impl<'a, A> ExactSizeIterator for IterMut<'a, A> {}
+impl<'a, A> ExactSizeIterator for Keys<'a, A> {}
+impl<'a, A> ExactSizeIterator for Values<'a, A> {}
+impl<'a, A> ExactSizeIterator for ValuesMut<'a, A> {}
+
 #[derive(Clone, Copy)]
-pub struct Mixer(u64, u64);
+struct Mixer(u64, u64);
 
 struct Slot<A> {
   hash: u64,
@@ -57,12 +103,12 @@ const fn invert_u64(a: u64) -> u64 {
 
 impl Mixer {
   #[inline(always)]
-  pub const fn new(m: [u64; 2]) -> Self {
+  const fn new(m: [u64; 2]) -> Self {
     Self(m[0] | 1, m[1] | 1)
   }
 
   #[inline(always)]
-  pub const fn hash(self, x: NonZeroU64) -> NonZeroU64 {
+  const fn hash(self, x: NonZeroU64) -> NonZeroU64 {
     let a = self.0;
     let b = self.1;
     let x = x.get();
@@ -73,7 +119,7 @@ impl Mixer {
   }
 
   #[inline(always)]
-  pub const fn invert(self) -> Self {
+  const fn invert(self) -> Self {
     let a = self.0;
     let b = self.1;
     let c = invert_u64(a.wrapping_mul(b));
@@ -82,6 +128,9 @@ impl Mixer {
 }
 
 impl<A> HashMapNZ64<A> {
+  /// Creates an empty map, seeding the hash mixer from a thread-local random
+  /// number generator.
+
   #[inline]
   pub fn new() -> Self {
     Self {
@@ -92,6 +141,9 @@ impl<A> HashMapNZ64<A> {
       check: ptr::null(),
     }
   }
+
+  /// Creates an empty map, seeding the hash mixer from the given random number
+  /// generator.
 
   #[inline]
   pub fn new_seeded(rng: &mut Rng) -> Self {
@@ -104,6 +156,8 @@ impl<A> HashMapNZ64<A> {
     }
   }
 
+  /// Returns the number of items.
+
   #[inline]
   pub fn len(&self) -> usize {
     let s = self.shift;
@@ -112,10 +166,14 @@ impl<A> HashMapNZ64<A> {
     (1 << (64 - s - 1)) - r
   }
 
+  /// Returns whether the map contains zero items.
+
   #[inline]
   pub fn is_empty(&self) -> bool {
     self.len() == 0
   }
+
+  /// Returns whether the map contains the given key.
 
   #[inline]
   pub fn contains_key(&self, key: NonZeroU64) -> bool {
@@ -137,6 +195,9 @@ impl<A> HashMapNZ64<A> {
 
     return x == h;
   }
+
+  /// Returns a reference to the value associated with the given key, if
+  /// present.
 
   #[inline]
   pub fn get(&self, key: NonZeroU64) -> Option<&A> {
@@ -160,6 +221,9 @@ impl<A> HashMapNZ64<A> {
 
     Some(unsafe { (&*p).value.assume_init_ref() })
   }
+
+  /// Returns a mutable reference to the value associated with the given key,
+  /// if present.
 
   #[inline]
   pub fn get_mut(&mut self, key: NonZeroU64) -> Option<&mut A> {
@@ -191,6 +255,9 @@ impl<A> HashMapNZ64<A> {
 
     unimplemented!()
   }
+
+  /// Inserts the given key and value into the map. Returns the previous value
+  /// associated with given key, if one was present.
 
   #[inline]
   pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<A> {
@@ -352,6 +419,9 @@ impl<A> HashMapNZ64<A> {
     None
   }
 
+  /// Removes the given key from the map. Returns the previous value associated
+  /// with the given key, if one was present.
+
   #[inline]
   pub fn remove(&mut self, key: NonZeroU64) -> Option<A> {
     let t = self.table as *mut Slot<A>;
@@ -393,6 +463,8 @@ impl<A> HashMapNZ64<A> {
     Some(v)
   }
 
+  /// Removes every item from the map. Retains heap-allocated memory.
+
   #[inline]
   pub fn clear(&mut self) {
     let t = self.table as *mut Slot<A>;
@@ -421,6 +493,8 @@ impl<A> HashMapNZ64<A> {
       each_mut(a, b, |p| { unsafe { &mut *p }.hash = 0; })
     }
   }
+
+  /// Removes every item from the map. Releases heap-allocated memory.
 
   #[inline]
   pub fn reset(&mut self) {
@@ -462,96 +536,150 @@ impl<A> HashMapNZ64<A> {
     unsafe { std::alloc::dealloc(a as *mut u8, layout) };
   }
 
-  pub fn sorted_keys(&self) -> Box<[NonZeroU64]> {
-    let t = self.table;
+  /// Returns an iterator yielding each key and a reference to its associated
+  /// value.
 
-    if t.is_null() { return Box::from([]); }
-
+  pub fn iter(&self) -> Iter<'_, A> {
     let s = self.shift;
-    let b = self.check;
-    let d = 1 << (64 - s);
-    let e = unsafe { b.offset_from(t) } as usize;
-    let n = d + e;
-    let a = unsafe { t.sub(d - 1) };
+    let r = self.space;
+
+    let k = (1 << (64 - s - 1)) - r;
+
+    if k == 0 {
+      return Iter {
+        invert: Mixer::new([1, 1]),
+        len: 0,
+        ptr: ptr::null(),
+        marker: PhantomData,
+      };
+    }
+
+    let t = self.table;
     let m = self.mixer;
-    let m = m.invert();
+    let d = 1 << (64 - s);
+    let a = unsafe { t.sub(d - 1) };
 
-    let mut r = Vec::with_capacity(n);
-
-    each(a, b, |p| { 
-      let x = unsafe { &*p }.hash;
-      if x != 0 {
-        let x = unsafe { NonZeroU64::new_unchecked(x) };
-        let k = m.hash(x);
-        r.push(k)
-      }
-    });
-
-    let mut r = r.into_boxed_slice();
-    r.sort();
-    r
+    Iter {
+      invert: m.invert(),
+      len: k,
+      ptr: a,
+      marker: PhantomData,
+    }
   }
 
-  pub fn items_sorted_by_key(&self) -> Box<[(NonZeroU64, &A)]> {
-    let t = self.table;
+  /// Returns an iterator yielding each key and a mutable reference to its
+  /// associated value.
 
-    if t.is_null() { return Box::from([]); }
-
+  pub fn iter_mut(&mut self) -> IterMut<'_, A> {
     let s = self.shift;
-    let b = self.check;
-    let d = 1 << (64 - s);
-    let e = unsafe { b.offset_from(t) } as usize;
-    let n = d + e;
-    let a = unsafe { t.sub(d - 1) };
-    let m = self.mixer;
-    let m = m.invert();
+    let r = self.space;
 
-    let mut r = Vec::with_capacity(n);
+    let k = (1 << (64 - s - 1)) - r;
 
-    each(a, b, |p| { 
-      let x = unsafe { &*p }.hash;
-      if x != 0 {
-        let x = unsafe { NonZeroU64::new_unchecked(x) };
-        let k = m.hash(x);
-        let v = unsafe { (&*p).value.assume_init_ref() };
-        r.push((k, v))
-      }
-    });
+    if k == 0 {
+      return IterMut {
+        invert: Mixer::new([1, 1]),
+        len: 0,
+        ptr: ptr::null_mut(),
+        marker: PhantomData,
+      };
+    }
 
-    let mut r = r.into_boxed_slice();
-    r.sort_by_key(|a| a.0);
-    r
-  }
-
-  pub fn items_sorted_by_key_mut(&mut self) -> Box<[(NonZeroU64, &mut A)]> {
     let t = self.table as *mut Slot<A>;
-
-    if t.is_null() { return Box::from([]); }
-
-    let s = self.shift;
-    let b = self.check;
-    let d = 1 << (64 - s);
-    let e = unsafe { b.offset_from(t) } as usize;
-    let n = d + e;
-    let a = unsafe { t.sub(d - 1) };
     let m = self.mixer;
-    let m = m.invert();
+    let d = 1 << (64 - s);
+    let a = unsafe { t.sub(d - 1) };
 
-    let mut r = Vec::with_capacity(n);
+    IterMut {
+      invert: m.invert(),
+      len: k,
+      ptr: a,
+      marker: PhantomData,
+    }
+  }
 
-    each_mut(a, b, |p| { 
-      let x = unsafe { &*p }.hash;
-      if x != 0 {
-        let x = unsafe { NonZeroU64::new_unchecked(x) };
-        let k = m.hash(x);
-        let v = unsafe { (&mut *p).value.assume_init_mut() };
-        r.push((k, v))
-      }
-    });
+  /// Returns an iterator yielding each key.
 
-    let mut r = r.into_boxed_slice();
-    r.sort_by_key(|a| a.0);
-    r
+  pub fn keys(&self) -> Keys<'_, A> {
+    let s = self.shift;
+    let r = self.space;
+
+    let k = (1 << (64 - s - 1)) - r;
+
+    if k == 0 {
+      return Keys {
+        invert: Mixer::new([1, 1]),
+        len: 0,
+        ptr: ptr::null(),
+        marker: PhantomData,
+      };
+    }
+
+    let t = self.table;
+    let m = self.mixer;
+    let d = 1 << (64 - s);
+    let a = unsafe { t.sub(d - 1) };
+
+    Keys {
+      invert: m.invert(),
+      len: k,
+      ptr: a,
+      marker: PhantomData,
+    }
+  }
+
+  /// Returns an iterator yielding a reference to each value.
+
+  pub fn values(&self) -> Values<'_, A> {
+    let s = self.shift;
+    let r = self.space;
+
+    let k = (1 << (64 - s - 1)) - r;
+
+    if k == 0 {
+      return Values {
+        len: 0,
+        ptr: ptr::null(),
+        marker: PhantomData,
+      };
+    }
+
+    let t = self.table;
+    let d = 1 << (64 - s);
+    let a = unsafe { t.sub(d - 1) };
+
+    Values {
+      len: k,
+      ptr: a,
+      marker: PhantomData,
+    }
+  }
+
+  /// Returns an iterator yielding a mutable reference to each value.
+
+  pub fn values_mut(&mut self) -> ValuesMut<'_, A> {
+    let s = self.shift;
+    let r = self.space;
+
+    let k = (1 << (64 - s - 1)) - r;
+
+    if k == 0 {
+      return ValuesMut {
+        len: 0,
+        ptr: ptr::null_mut(),
+        marker: PhantomData,
+      };
+    }
+
+    let t = self.table as *mut Slot<A>;
+    let d = 1 << (64 - s);
+    let a = unsafe { t.sub(d - 1) };
+
+    ValuesMut {
+      len: k,
+      ptr: a,
+      marker: PhantomData,
+    }
   }
 
   fn internal_num_slots(&self) -> usize {
@@ -602,16 +730,49 @@ impl<A> HashMapNZ64<A> {
 }
 
 impl<A> Drop for HashMapNZ64<A> {
+  #[inline]
   fn drop(&mut self) {
     self.reset()
   }
 }
 
+impl<A> Index<NonZeroU64> for HashMapNZ64<A> {
+  type Output = A;
+
+  /// Returns a reference to the value associated with the given key.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the key is missing.
+
+  #[inline]
+  fn index(&self, key: NonZeroU64) -> &A {
+    self.get(key).unwrap()
+  }
+}
+
+impl<A> IndexMut<NonZeroU64> for HashMapNZ64<A> {
+  /// Returns a mutable reference to the value associated with the given key.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the key is missing.
+
+  #[inline]
+  fn index_mut(&mut self, key: NonZeroU64) -> &mut A {
+    self.get_mut(key).unwrap()
+  }
+}
+
 impl<A: fmt::Debug> fmt::Debug for HashMapNZ64<A> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    let mut items = self.iter().collect::<Vec<(NonZeroU64, &A)>>();
+
+    items.sort_by_key(|x| x.0);
+
     let mut f = f.debug_map();
 
-    for (key, value) in self.items_sorted_by_key().iter() {
+    for (key, value) in items.iter() {
       f.entry(key, value);
     }
 
@@ -619,12 +780,178 @@ impl<A: fmt::Debug> fmt::Debug for HashMapNZ64<A> {
   }
 }
 
+impl<'a, A> Iterator for Iter<'a, A> {
+  type Item = (NonZeroU64, &'a A);
+
+  #[inline]
+  fn next(&mut self) -> Option<Self::Item> {
+    let k = self.len;
+
+    if k == 0 { return None; }
+
+    let mut p = self.ptr;
+    let mut x = unsafe { &*p }.hash;
+
+    while x == 0 {
+      p = unsafe { p.add(1) };
+      x = unsafe { &*p }.hash;
+    }
+
+    let m = self.invert;
+    let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
+    let v = unsafe { (&*p).value.assume_init_ref() };
+
+    self.ptr = unsafe { p.add(1) };
+    self.len = k - 1;
+
+    Some((x, v))
+  }
+
+  #[inline]
+  fn size_hint(&self) -> (usize, Option<usize>) {
+    (self.len, Some(self.len))
+  }
+}
+
+impl<'a, A> Iterator for IterMut<'a, A> {
+  type Item = (NonZeroU64, &'a mut A);
+
+  #[inline]
+  fn next(&mut self) -> Option<Self::Item> {
+    let k = self.len;
+
+    if k == 0 { return None; }
+
+    let mut p = self.ptr;
+    let mut x = unsafe { &*p }.hash;
+
+    while x == 0 {
+      p = unsafe { p.add(1) };
+      x = unsafe { &*p }.hash;
+    }
+
+    let m = self.invert;
+    let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
+    let v = unsafe { (&mut *p).value.assume_init_mut() };
+
+    self.ptr = unsafe { p.add(1) };
+    self.len = k - 1;
+
+    Some((x, v))
+  }
+
+  #[inline]
+  fn size_hint(&self) -> (usize, Option<usize>) {
+    (self.len, Some(self.len))
+  }
+}
+
+impl<'a, A> Iterator for Keys<'a, A> {
+  type Item = NonZeroU64;
+
+  #[inline]
+  fn next(&mut self) -> Option<Self::Item> {
+    let n = self.len;
+
+    if n == 0 { return None; }
+
+    let mut p = self.ptr;
+    let mut x = unsafe { &*p }.hash;
+
+    while x == 0 {
+      p = unsafe { p.add(1) };
+      x = unsafe { &*p }.hash;
+    }
+
+    let m = self.invert;
+    let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
+
+    self.ptr = unsafe { p.add(1) };
+    self.len = n - 1;
+
+    Some(x)
+  }
+
+  #[inline]
+  fn size_hint(&self) -> (usize, Option<usize>) {
+    (self.len, Some(self.len))
+  }
+}
+
+impl<'a, A> Iterator for Values<'a, A> {
+  type Item = &'a A;
+
+  #[inline]
+  fn next(&mut self) -> Option<Self::Item> {
+    let k = self.len;
+
+    if k == 0 { return None; }
+
+    let mut p = self.ptr;
+    let mut x = unsafe { &*p }.hash;
+
+    while x == 0 {
+      p = unsafe { p.add(1) };
+      x = unsafe { &*p }.hash;
+    }
+
+    let v = unsafe { (&*p).value.assume_init_ref() };
+
+    self.ptr = unsafe { p.add(1) };
+    self.len = k - 1;
+
+    Some(v)
+  }
+
+  #[inline]
+  fn size_hint(&self) -> (usize, Option<usize>) {
+    (self.len, Some(self.len))
+  }
+}
+
+impl<'a, A> Iterator for ValuesMut<'a, A> {
+  type Item = &'a mut A;
+
+  #[inline]
+  fn next(&mut self) -> Option<Self::Item> {
+    let k = self.len;
+
+    if k == 0 { return None; }
+
+    let mut p = self.ptr;
+    let mut x = unsafe { &*p }.hash;
+
+    while x == 0 {
+      p = unsafe { p.add(1) };
+      x = unsafe { &*p }.hash;
+    }
+
+    let v = unsafe { (&mut *p).value.assume_init_mut() };
+
+    self.ptr = unsafe { p.add(1) };
+    self.len = k - 1;
+
+    Some(v)
+  }
+
+  #[inline]
+  fn size_hint(&self) -> (usize, Option<usize>) {
+    (self.len, Some(self.len))
+  }
+}
+
 pub mod internal {
+  //! Unstable API for internal tests and benchmarks.
+
   use crate::prelude::*;
+
+  /// asdf
 
   pub fn num_slots<A>(t: &HashMapNZ64<A>) -> usize {
     t.internal_num_slots()
   }
+
+  /// asdf
 
   pub fn num_bytes<A>(t: &HashMapNZ64<A>) -> usize {
     t.internal_num_bytes()

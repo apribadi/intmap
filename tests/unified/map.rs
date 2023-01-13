@@ -12,7 +12,7 @@ fn foo() -> Result<(), std::fmt::Error> {
 
   writeln!(s, "load = {:#?}", map::internal::load(&t))?;
 
-  for &key in t.sorted_keys().iter() {
+  for key in t.keys() {
     assert!(t.contains_key(key));
   }
 
@@ -25,7 +25,7 @@ fn foo() -> Result<(), std::fmt::Error> {
 
   writeln!(s, "load = {:#?}", map::internal::load(&t))?;
 
-  for &key in t.sorted_keys().iter() {
+  for key in t.keys() {
     assert!(t.contains_key(key));
   }
 
@@ -111,10 +111,10 @@ fn test_keys() -> Result<(), std::fmt::Error> {
     t.insert(key, u64::from(key) - 1);
   }
 
-  writeln!(s, "{:?}", t.items_sorted_by_key())?;
+  writeln!(s, "{:?}", t)?;
 
   expect![[r#"
-      [(5, 4), (10, 9), (13, 12), (17, 16), (100, 99), (1000, 999), (10000, 9999)]
+      {5: 4, 10: 9, 13: 12, 17: 16, 100: 99, 1000: 999, 10000: 9999}
   "#]].assert_eq(&s);
 
   Ok(())

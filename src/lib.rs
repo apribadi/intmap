@@ -1,3 +1,5 @@
+//! This crate implements a fast hash map and hash set keyed by `NonZeroU64`s.
+
 mod prelude;
 pub mod map;
 pub mod rng;
