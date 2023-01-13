@@ -2,6 +2,12 @@ use crate::prelude::*;
 
 pub struct HashSetNZ64(HashMapNZ64<()>);
 
+#[derive(Clone)]
+pub struct Iter<'a>(Keys<'a, ()>);
+
+impl<'a> FusedIterator for Iter<'a> {}
+impl<'a> ExactSizeIterator for Iter<'a> {}
+
 impl HashSetNZ64 {
   #[inline]
   pub fn new() -> Self {
@@ -47,18 +53,39 @@ impl HashSetNZ64 {
   pub fn reset(&mut self) {
     self.0.reset()
   }
+
+  #[inline]
+  pub fn iter(&self) -> Iter<'_> {
+    Iter(self.0.keys())
+  }
 }
 
-/*
 impl fmt::Debug for HashSetNZ64 {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    let mut a = self.iter().collect::<Vec<_>>();
+
+    a.sort();
+
     let mut f = f.debug_set();
 
-    for key in self.sorted().iter() {
+    for key in a.iter() {
       f.entry(key);
     }
 
     f.finish()
   }
 }
-*/
+
+impl<'a> Iterator for Iter<'a> {
+  type Item = NonZeroU64;
+
+  #[inline]
+  fn next(&mut self) -> Option<Self::Item> {
+    self.0.next()
+  }
+
+  #[inline]
+  fn size_hint(&self) -> (usize, Option<usize>) {
+    self.0.size_hint()
+  }
+}

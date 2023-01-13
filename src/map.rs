@@ -15,6 +15,14 @@ pub struct HashMapNZ64<A> {
 unsafe impl<A: Send> Send for HashMapNZ64<A> {}
 unsafe impl<A: Sync> Sync for HashMapNZ64<A> {}
 
+#[derive(Clone, Copy)]
+struct Mixer(u64, u64);
+
+struct Slot<A> {
+  hash: u64,
+  value: MaybeUninit<A>,
+}
+
 #[derive(Clone)]
 pub struct Iter<'a, A: 'a> {
   invert: Mixer,
@@ -62,14 +70,6 @@ impl<'a, A> ExactSizeIterator for IterMut<'a, A> {}
 impl<'a, A> ExactSizeIterator for Keys<'a, A> {}
 impl<'a, A> ExactSizeIterator for Values<'a, A> {}
 impl<'a, A> ExactSizeIterator for ValuesMut<'a, A> {}
-
-#[derive(Clone, Copy)]
-struct Mixer(u64, u64);
-
-struct Slot<A> {
-  hash: u64,
-  value: MaybeUninit<A>,
-}
 
 const INITIAL_U: usize = 4;
 const INITIAL_V: usize = 3;
@@ -263,7 +263,10 @@ impl<A> HashMapNZ64<A> {
   pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<A> {
     let t = self.table as *mut Slot<A>;
 
-    if t.is_null() { return self.insert_cold_init_table(key, value); }
+    if t.is_null() {
+      self.insert_cold_init_table(key, value);
+      return None;
+    }
 
     let m = self.mixer;
     let s = self.shift;
@@ -277,32 +280,35 @@ impl<A> HashMapNZ64<A> {
       x = unsafe { &*p }.hash;
     }
 
-    let v = mem::replace(&mut unsafe { &mut *p }.value, MaybeUninit::new(value));
+    if x == h {
+      let v = mem::replace(unsafe { (&mut *p).value.assume_init_mut() }, value);
+      return Some(v);
+    }
 
-    if x == h { return Some(unsafe { v.assume_init() }); }
+    let mut v = value;
 
     unsafe { &mut *p }.hash = h;
 
-    let mut o = Slot { hash: x, value: v };
-
-    while o.hash != 0 {
+    while x != 0 {
+      v = mem::replace(unsafe { (&mut *p).value.assume_init_mut() }, v);
       p = unsafe { p.add(1) };
-      o = unsafe { p.replace(o) };
+      x = mem::replace(&mut unsafe { &mut *p }.hash, x);
     }
+
+    unsafe { &mut *p }.value = MaybeUninit::new(v);
 
     let r = self.space - 1;
     self.space = r;
-
     let b = self.check;
 
-    if r == 0 || ptr::eq(p, b) { return self.insert_cold_grow_table(); }
+    if r == 0 || ptr::eq(p, b) { self.insert_cold_grow_table(); }
 
     None
   }
 
   #[inline(never)]
   #[cold]
-  fn insert_cold_init_table(&mut self, key: NonZeroU64, value: A) -> Option<A> {
+  fn insert_cold_init_table(&mut self, key: NonZeroU64, value: A) {
     assert!(INITIAL_N <= isize::MAX as usize / mem::size_of::<Slot<A>>());
 
     let align = mem::align_of::<Slot<A>>();
@@ -327,13 +333,11 @@ impl<A> HashMapNZ64<A> {
     self.table = t;
     self.space = INITIAL_R - 1;
     self.check = b;
-
-    None
   }
 
   #[inline(never)]
   #[cold]
-  fn insert_cold_grow_table(&mut self) -> Option<A> {
+  fn insert_cold_grow_table(&mut self) {
     let old_t = self.table as *mut Slot<A>;
     let old_s = self.shift;
     let old_r = self.space;
@@ -415,8 +419,6 @@ impl<A> HashMapNZ64<A> {
     self.check = new_b;
 
     unsafe { std::alloc::dealloc(old_a as *mut u8, old_layout) };
-
-    None
   }
 
   /// Removes the given key from the map. Returns the previous value associated
@@ -537,8 +539,9 @@ impl<A> HashMapNZ64<A> {
   }
 
   /// Returns an iterator yielding each key and a reference to its associated
-  /// value.
+  /// value. The iterator item type is `(NonZeroU64, &'_ A)`.
 
+  #[inline]
   pub fn iter(&self) -> Iter<'_, A> {
     let s = self.shift;
     let r = self.space;
@@ -568,10 +571,10 @@ impl<A> HashMapNZ64<A> {
   }
 
   /// Returns an iterator yielding each key and a mutable reference to its
-  /// associated value.
+  /// associated value. The iterator item type is `(NonZeroU64, &'_ mut A)`.
 
-  pub fn iter_mut(&mut self) -> IterMut<'_, A> {
-    let s = self.shift;
+  #[inline]
+  pub fn iter_mut(&mut self) -> IterMut<'_, A> { let s = self.shift;
     let r = self.space;
 
     let k = (1 << (64 - s - 1)) - r;
@@ -598,8 +601,10 @@ impl<A> HashMapNZ64<A> {
     }
   }
 
-  /// Returns an iterator yielding each key.
+  /// Returns an iterator yielding each key. The iterator item type is
+  /// `NonZeroU64`.
 
+  #[inline]
   pub fn keys(&self) -> Keys<'_, A> {
     let s = self.shift;
     let r = self.space;
@@ -628,8 +633,10 @@ impl<A> HashMapNZ64<A> {
     }
   }
 
-  /// Returns an iterator yielding a reference to each value.
+  /// Returns an iterator yielding a reference to each value. The iterator item
+  /// type is `&'_ A`.
 
+  #[inline]
   pub fn values(&self) -> Values<'_, A> {
     let s = self.shift;
     let r = self.space;
@@ -655,8 +662,10 @@ impl<A> HashMapNZ64<A> {
     }
   }
 
-  /// Returns an iterator yielding a mutable reference to each value.
+  /// Returns an iterator yielding a mutable reference to each value. The
+  /// iterator item type is `&'_ mut A`.
 
+  #[inline]
   pub fn values_mut(&mut self) -> ValuesMut<'_, A> {
     let s = self.shift;
     let r = self.space;
@@ -682,6 +691,7 @@ impl<A> HashMapNZ64<A> {
     }
   }
 
+  #[inline]
   fn internal_num_slots(&self) -> usize {
     let t = self.table;
 
@@ -695,10 +705,12 @@ impl<A> HashMapNZ64<A> {
     n
   }
 
+  #[inline]
   fn internal_num_bytes(&self) -> usize {
     self.internal_num_slots() * mem::size_of::<Slot<A>>()
   }
 
+  #[inline]
   fn internal_load(&self) -> f64 {
     let m = self.len();
     let n = self.internal_num_slots();
@@ -708,6 +720,7 @@ impl<A> HashMapNZ64<A> {
     (m as f64) / (n as f64) 
   }
 
+  #[inline]
   fn internal_allocation_info(&self) -> Option<(NonNull<u8>, Layout)> {
     let t = self.table;
 
@@ -945,22 +958,22 @@ pub mod internal {
 
   use crate::prelude::*;
 
-  /// asdf
-
+  #[inline]
   pub fn num_slots<A>(t: &HashMapNZ64<A>) -> usize {
     t.internal_num_slots()
   }
 
-  /// asdf
-
+  #[inline]
   pub fn num_bytes<A>(t: &HashMapNZ64<A>) -> usize {
     t.internal_num_bytes()
   }
 
+  #[inline]
   pub fn load<A>(t: &HashMapNZ64<A>) -> f64 {
     t.internal_load()
   }
 
+  #[inline]
   pub fn allocation_info<A>(t: &HashMapNZ64<A>) -> Option<(NonNull<u8>, Layout)> {
     t.internal_allocation_info()
   }

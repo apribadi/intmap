@@ -15,6 +15,7 @@ pub use core::ops::IndexMut;
 pub use core::ptr::NonNull;
 pub use core::ptr;
 pub use crate::map::HashMapNZ64;
+pub use crate::map::Keys;
 pub use crate::rng::Rng;
 pub use crate::rng;
 
