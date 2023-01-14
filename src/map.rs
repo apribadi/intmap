@@ -23,6 +23,24 @@ struct Slot<A> {
   value: MaybeUninit<A>,
 }
 
+/*
+pub enum Entry<'a, A: 'a> {
+  Vacant(VacantEntry<'a, A>),
+  Occupied(OccupiedEntry<'a, A>),
+}
+
+pub struct VacantEntry<'a, A: 'a> {
+  hashmap: &'a mut HashMapNZ64<A>,
+  slot: *mut Slot<A>,
+  variance: PhantomData<&'a mut A>,
+}
+
+pub struct OccupiedEntry<'a, A: 'a> {
+  slot: *mut Slot<A>,
+  variance: PhantomData<&'a mut A>,
+}
+*/
+
 #[derive(Clone)]
 pub struct Iter<'a, A: 'a> {
   mixer: Mixer,
@@ -128,7 +146,7 @@ impl<A> HashMapNZ64<A> {
   #[inline]
   pub fn new() -> Self {
     Self {
-      mixer: Mixer::new(rng::u64()),
+      mixer: Mixer::new(rng::thread_local::u64()),
       table: ptr::null(),
       shift: INITIAL_S,
       space: INITIAL_R,
@@ -468,6 +486,42 @@ impl<A> HashMapNZ64<A> {
     Some(v)
   }
 
+  /*
+  #[inline]
+  pub fn entry(&mut self, key: NonZeroU64) -> Entry<'_, A> {
+    let t = self.table as *mut Slot<A>;
+
+    if t.is_null() { 
+      unimplemented!()
+    }
+
+    let m = self.mixer;
+    let s = self.shift;
+    let h = u64::from(m.hash(key));
+
+    let mut p = unsafe { t.offset(- spot(s, h)) };
+    let mut x = unsafe { &*p }.hash;
+
+    while x > h {
+      p = unsafe { p.add(1) };
+      x = unsafe { &*p }.hash;
+    }
+
+    if x != h {
+      Entry::Vacant(VacantEntry {
+        hashmap: self,
+        slot: p,
+        variance: PhantomData,
+      })
+    } else {
+      Entry::Occupied(OccupiedEntry {
+        slot: p,
+        variance: PhantomData,
+      })
+    }
+  }
+  */
+
   /// Removes every item from the map. Retains heap-allocated memory.
 
   #[inline]
@@ -722,6 +776,26 @@ impl<A: fmt::Debug> fmt::Debug for HashMapNZ64<A> {
     f.finish()
   }
 }
+
+/*
+impl<'a, A> OccupiedEntry<'a, A> {
+  pub fn value_mut(&mut self) -> &mut A {
+    unsafe { (&mut *self.slot).value.assume_init_mut() }
+  }
+
+  pub fn into_value_mut(self) -> &'a mut A {
+    unsafe { (&mut *self.slot).value.assume_init_mut() }
+  }
+
+  pub fn replace(&mut self, value: A) -> A {
+    mem::replace(self.value_mut(), value)
+  }
+
+  pub fn remove(self) -> A {
+    unimplemented!()
+  }
+}
+*/
 
 impl<'a, A> Iterator for Iter<'a, A> {
   type Item = (NonZeroU64, &'a A);

@@ -61,13 +61,45 @@ fn test_iter() -> Result<(), std::fmt::Error> {
 
   let it = t.values();
   let _ = t.get(key);
+  let mut a = it.collect::<Vec<_>>();
+  a.sort();
 
-  for elt in it {
-    writeln!(s, "{:?}", elt)?;
-  }
+  writeln!(s, "{:?}", a)?;
+
+  expect![[r#"
+      [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+  "#]].assert_eq(&s);
 
   Ok(())
 }
+
+/*
+#[test]
+fn test_entry() -> Result<(), std::fmt::Error> {
+  let mut s = String::new();
+  let mut t = HashMapNZ64::<u64>::new();
+  let key = NonZeroU64::new(1).unwrap();
+
+  t.insert(key, 13);
+
+  match t.entry(key) {
+    map::Entry::Vacant(_) => {}
+    map::Entry::Occupied(mut o) => {
+      let old = o.replace(100);
+      writeln!(s, "old = {:?}", old)?;
+    }
+  }
+
+  writeln!(s, "{:?}", t)?;
+
+  expect![[r#"
+      old = 13
+      {1: 100}
+  "#]].assert_eq(&s);
+
+  Ok(())
+}
+*/
 
 #[test]
 fn foo() -> Result<(), std::fmt::Error> {
