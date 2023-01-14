@@ -7,6 +7,7 @@ edition = "2021"
 getrandom = "0.2.8"
 
 [dev-dependencies]
+ahash = { version = "0.8.2", features = [ "std" ] }
 expect-test = "1.4.0"
 fxhash = "0.2.1"
 hashbrown = { version = "0.13.2", features = [ "ahash", "raw" ] }

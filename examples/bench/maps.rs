@@ -5,7 +5,7 @@ pub trait BenchMap {
   fn get(&self, key: NonZeroU64) -> Option<u64>;
   fn insert(&mut self, key: NonZeroU64, value: u64) -> Option<u64>;
   fn remove(&mut self, key: NonZeroU64) -> Option<u64>;
-  fn heap_memory_in_bytes(&mut self) -> usize { 0 }
+  fn heap_memory_in_bytes(&self) -> usize { 0 }
 }
 
 impl BenchMap for HashMapNZ64<u64> {
@@ -21,7 +21,7 @@ impl BenchMap for HashMapNZ64<u64> {
   #[inline]
   fn remove(&mut self, key: NonZeroU64) -> Option<u64> { self.remove(key) }
 
-  fn heap_memory_in_bytes(&mut self) -> usize {
+  fn heap_memory_in_bytes(&self) -> usize {
     match wordmap::map::internal::allocation_info(self) {
       None => { 0 }
       Some(info) => info.1.size()
@@ -55,10 +55,6 @@ impl BenchMap for AHashMap<NonZeroU64, u64> {
 
   #[inline]
   fn remove(&mut self, key: NonZeroU64) -> Option<u64> { self.remove(&key) }
-
-  fn heap_memory_in_bytes(&mut self) -> usize {
-    self.raw_table().allocation_info().1.size()
-  }
 }
 
 impl BenchMap for FxHashMap<NonZeroU64, u64> {
