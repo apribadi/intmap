@@ -160,7 +160,8 @@ fn main() {
       let _ = bench_get_50pct::<T>;
       let _ = bench_get_100pct::<T>;
       let _ = bench_remove_insert::<T>;
-      let nanos = bench_remove_insert::<T>(size);
+      let _ = bench_memory::<T>;
+      let nanos = bench_get_100pct::<T>(size);
       println!("{:11} {:9} -> {:4.0} ns/op", name, size, nanos);
     }
   }
@@ -170,6 +171,8 @@ fn main() {
   go::<FxHashMap<NonZeroU64, u64>>("FxHashMap");
   go::<IntMap<u64>>("IntMap");
   // go::<FakeMap>("FakeMap");
+  //
+  /*
   fn go2<T: BenchMap>(name: &'static str) {
     for &size in SIZES {
       let x = bench_memory::<T>(size);
@@ -178,4 +181,5 @@ fn main() {
   }
   go2::<AHashMap<NonZeroU64, u64>>("AHashMap");
   go2::<HashMapNZ64<u64>>("HashMapNZ64");
+  */
 }

@@ -1,8 +1,17 @@
 //! This module implements a fast hash map keyed by `NonZeroU64`s.
+//!
+//! blah blah blah
+//!
+//! blah blah blah
+//!
+//! design discussion
 
 use crate::prelude::*;
 
 /// A fast hash map keyed by `NonZeroU64`s.
+///
+/// The module documentation [`wordmap::map`](crate::map) discusses the design
+/// tradeoffs of this data structure.
 
 pub struct HashMapNZ64<A> {
   mixer: Mixer,
@@ -273,7 +282,8 @@ impl<A> HashMapNZ64<A> {
   ///
   /// # Panics
   ///
-  /// Panics if ...
+  /// Panics when allocation fails. If that happens, it is possible for arbitrary items from the
+  /// map to leak, but the map will remain in a valid state.
 
   #[inline]
   pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<A> {
@@ -346,6 +356,8 @@ impl<A> HashMapNZ64<A> {
     unsafe { &mut *p }.hash = h;
     unsafe { &mut *p }.value = MaybeUninit::new(value);
 
+    // We don't modify the table until after we know that allocation won't fail.
+
     self.table = t;
     self.space = INITIAL_R - 1;
     self.check = b;
@@ -357,6 +369,9 @@ impl<A> HashMapNZ64<A> {
     // TODO:
     //
     // Preserve invariants even if an assertion fails.
+    //
+    // If the `check` spot is occupied, temporarily remove the item there, then replace it at the
+    // end.
 
     let old_t = self.table as *mut Slot<A>;
     let old_s = self.shift;
@@ -531,27 +546,39 @@ impl<A> HashMapNZ64<A> {
     if t.is_null() { return; }
 
     if mem::needs_drop::<A>() {
-      // TODO:
-      //
-      // Preserve invariants even if `A::drop` panics.
-
       let s = self.shift;
       let b = self.check;
       let d = 1 << (64 - s);
       let a = unsafe { t.sub(d - 1) };
+
+      // Place table into a consistent state before we run `drop`s, in case
+      // `drop` panics.
+
+      self.table = ptr::null();
+      self.shift = INITIAL_S;
+      self.space = INITIAL_R;
+      self.check = ptr::null();
 
       each_mut(a, b, |p| {
         if unsafe { &mut *p }.hash != 0 {
           unsafe { &mut *p }.hash = 0;
           unsafe { (&mut *p).value.assume_init_drop() };
         }
-      })
+      });
+
+      self.table = t;
+      self.shift = s;
+      self.space = 1 << (64 - s - 1);
+      self.check = b;
     } else {
       let s = self.shift;
       let b = self.check;
       let d = 1 << (64 - s);
       let a = unsafe { t.sub(d - 1) };
-      each_mut(a, b, |p| { unsafe { &mut *p }.hash = 0; })
+
+      each_mut(a, b, |p| { unsafe { &mut *p }.hash = 0; });
+
+      self.space = 1 << (64 - s - 1);
     }
   }
 
@@ -736,12 +763,6 @@ impl<A> Drop for HashMapNZ64<A> {
 impl<A> Index<NonZeroU64> for HashMapNZ64<A> {
   type Output = A;
 
-  /// Returns a reference to the value associated with the given key.
-  ///
-  /// # Panics
-  ///
-  /// Panics if the key is missing.
-
   #[inline]
   fn index(&self, key: NonZeroU64) -> &A {
     self.get(key).unwrap()
@@ -749,12 +770,6 @@ impl<A> Index<NonZeroU64> for HashMapNZ64<A> {
 }
 
 impl<A> IndexMut<NonZeroU64> for HashMapNZ64<A> {
-  /// Returns a mutable reference to the value associated with the given key.
-  ///
-  /// # Panics
-  ///
-  /// Panics if the key is missing.
-
   #[inline]
   fn index_mut(&mut self, key: NonZeroU64) -> &mut A {
     self.get_mut(key).unwrap()
@@ -958,7 +973,7 @@ impl<'a, A> Iterator for ValuesMut<'a, A> {
 }
 
 pub mod internal {
-  //! Unstable API for internal tests and benchmarks.
+  //! This unstable API exposes internal implementation details for tests and benchmarks.
 
   use crate::prelude::*;
 
