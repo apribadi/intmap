@@ -1,15 +1,16 @@
 use crate::prelude::*;
 
 pub trait BenchMap {
-  fn make() -> Self;
+  fn new() -> Self;
   fn get(&self, key: NonZeroU64) -> Option<u64>;
   fn insert(&mut self, key: NonZeroU64, value: u64) -> Option<u64>;
   fn remove(&mut self, key: NonZeroU64) -> Option<u64>;
+  fn heap_memory_in_bytes(&mut self) -> usize { 0 }
 }
 
 impl BenchMap for HashMapNZ64<u64> {
   #[inline]
-  fn make() -> Self { HashMapNZ64::new() }
+  fn new() -> Self { HashMapNZ64::new() }
 
   #[inline]
   fn get(&self, key: NonZeroU64) -> Option<u64> { self.get(key).map(|x| *x) }
@@ -19,11 +20,18 @@ impl BenchMap for HashMapNZ64<u64> {
 
   #[inline]
   fn remove(&mut self, key: NonZeroU64) -> Option<u64> { self.remove(key) }
+
+  fn heap_memory_in_bytes(&mut self) -> usize {
+    match wordmap::map::internal::allocation_info(self) {
+      None => { 0 }
+      Some(info) => info.1.size()
+    }
+  }
 }
 
 impl BenchMap for HashMap<NonZeroU64, u64> {
   #[inline]
-  fn make() -> Self { HashMap::new() }
+  fn new() -> Self { HashMap::new() }
 
   #[inline]
   fn get(&self, key: NonZeroU64) -> Option<u64> { self.get(&key).map(|x| *x) }
@@ -37,7 +45,25 @@ impl BenchMap for HashMap<NonZeroU64, u64> {
 
 impl BenchMap for AHashMap<NonZeroU64, u64> {
   #[inline]
-  fn make() -> Self { AHashMap::new() }
+  fn new() -> Self { AHashMap::new() }
+
+  #[inline]
+  fn get(&self, key: NonZeroU64) -> Option<u64> { self.get(&key).map(|x| *x) }
+
+  #[inline]
+  fn insert(&mut self, key: NonZeroU64, value: u64) -> Option<u64> { self.insert(key, value) }
+
+  #[inline]
+  fn remove(&mut self, key: NonZeroU64) -> Option<u64> { self.remove(&key) }
+
+  fn heap_memory_in_bytes(&mut self) -> usize {
+    self.raw_table().allocation_info().1.size()
+  }
+}
+
+impl BenchMap for FxHashMap<NonZeroU64, u64> {
+  #[inline]
+  fn new() -> Self { FxHashMap::default() }
 
   #[inline]
   fn get(&self, key: NonZeroU64) -> Option<u64> { self.get(&key).map(|x| *x) }
@@ -49,25 +75,25 @@ impl BenchMap for AHashMap<NonZeroU64, u64> {
   fn remove(&mut self, key: NonZeroU64) -> Option<u64> { self.remove(&key) }
 }
 
-impl BenchMap for FxHashMap<NonZeroU64, u64> {
+impl BenchMap for IntMap<u64> {
   #[inline]
-  fn make() -> Self { FxHashMap::default() }
+  fn new() -> Self { IntMap::new() }
 
   #[inline]
-  fn get(&self, key: NonZeroU64) -> Option<u64> { self.get(&key).map(|x| *x) }
+  fn get(&self, key: NonZeroU64) -> Option<u64> { self.get(key.get()).map(|x| *x) }
 
   #[inline]
-  fn insert(&mut self, key: NonZeroU64, value: u64) -> Option<u64> { self.insert(key, value) }
+  fn insert(&mut self, key: NonZeroU64, value: u64) -> Option<u64> { self.insert(key.get(), value) }
 
   #[inline]
-  fn remove(&mut self, key: NonZeroU64) -> Option<u64> { self.remove(&key) }
+  fn remove(&mut self, key: NonZeroU64) -> Option<u64> { self.remove(key.get()) }
 }
 
 pub struct FakeMap(u64);
 
 impl BenchMap for FakeMap {
   #[inline]
-  fn make() -> Self {
+  fn new() -> Self {
     Self(0)
   }
 

@@ -7,6 +7,7 @@ pub use wordmap::map::HashMapNZ64;
 pub use wordmap::rng::Rng;
 pub use std::collections::HashMap;
 pub use std::time::Instant;
+pub use intmap::IntMap;
 
 pub use crate::maps::BenchMap;
 pub use crate::maps::FakeMap;

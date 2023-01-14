@@ -127,4 +127,9 @@ pub mod thread_local {
   pub fn u64() -> u64 {
     internal_with_thread_local(|g| g.u64())
   }
+
+  #[inline]
+  pub fn split() -> Rng {
+    internal_with_thread_local(|g| g.split())
+  }
 }
