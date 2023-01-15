@@ -105,6 +105,17 @@ const INITIAL_E: usize = 8;
 const INITIAL_N: usize = INITIAL_D + INITIAL_E;
 const INITIAL_R: isize = INITIAL_C;
 
+// TODO:
+//
+// layout comment
+//
+// d = 2 ** u
+// e = 2 ** v
+// n = d + e
+//
+// t = a + (d - 1)
+// b = a + (n - 1)
+
 #[inline(always)]
 const unsafe fn spot(shift: usize, h: u64) -> isize {
   if ! (shift <= 63) { unsafe { unreachable_unchecked() }; }
@@ -355,9 +366,9 @@ impl<A> HashMapNZ64<A> {
 
     let r = self.space - 1;
     self.space = r;
-    let b = self.check;
+    let b = self.check as *mut Slot<A>;
 
-    if r < 0 || ptr::eq(p, b) { self.insert_cold_grow_table(); }
+    if r < 0 || p == b { self.insert_cold_grow_table(); }
 
     None
   }
@@ -365,24 +376,30 @@ impl<A> HashMapNZ64<A> {
   #[inline(never)]
   #[cold]
   fn insert_cold_grow_table(&mut self) {
-    // TODO:
-    //
-    // Preserve invariants even if an assertion fails.
-    //
-    // If the `check` spot is occupied, temporarily remove the item there, then
-    // replace it at the end.
-
     let old_t = self.table as *mut Slot<A>;
     let old_s = self.shift;
     let old_r = self.space;
     let old_b = self.check as *mut Slot<A>;
 
-    // d = 2 ** u
-    // e = 2 ** v
-    // n = d + e
+    let old_b_hash = unsafe { &*old_b }.hash;
+    let is_overfull = old_r < 0;
+    let is_overflow = old_b_hash != 0;
+
+    // WARNING!
     //
-    // t = a + (d - 1)
-    // b = a + (n - 1)
+    // We must be careful to leave the map in a valid state even if attempting
+    // to allocate a new table results in a panic.
+    //
+    // It turns out that the `is_overfull` state with negative space actually
+    // *is* valid, but the `is_overflow` state *is not* valid.
+    //
+    // In the latter case, we temporarily remove the item in the final slot and
+    // restore it after allocation has succeeded.
+
+    if is_overflow {
+      unsafe { &mut *old_b }.hash = 0;
+      self.space = old_r + 1;
+    }
 
     let old_c = 1 << (64 - old_s - 1);
     let old_d = 1 << (64 - old_s);
@@ -392,8 +409,8 @@ impl<A> HashMapNZ64<A> {
     let old_u = 64 - old_s;
     let old_v = old_e.trailing_zeros() as usize;
 
-    let new_u = old_u + ((old_r < 0) as usize);
-    let new_v = old_v + ((unsafe { &*old_b }.hash != 0) as usize);
+    let new_u = old_u + is_overfull as usize;
+    let new_v = old_v + is_overflow as usize;
 
     assert!(new_u <= 64);
     assert!(new_u <= usize::BITS as usize - 1);
@@ -420,6 +437,14 @@ impl<A> HashMapNZ64<A> {
 
     if new_a.is_null() { match std::alloc::handle_alloc_error(new_layout) {} }
 
+    // At this point, we know that allocating a new table has succeeded, so we
+    // undo our earlier `if is_overflow { ... }` block.
+
+    if is_overflow {
+      unsafe { &mut *old_b }.hash = old_b_hash;
+      self.space = old_r;
+    }
+
     let new_t = unsafe { new_a.add(new_d - 1) };
     let new_b = unsafe { new_a.add(new_n - 1) };
 
@@ -443,6 +468,8 @@ impl<A> HashMapNZ64<A> {
     self.shift = new_s;
     self.space = new_r;
     self.check = new_b;
+
+    // The map is now in a valid state, even if `dealloc` panics.
 
     unsafe { std::alloc::dealloc(old_a as *mut u8, old_layout) };
   }
