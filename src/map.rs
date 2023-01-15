@@ -24,31 +24,20 @@ pub struct HashMapNZ64<A> {
 unsafe impl<A: Send> Send for HashMapNZ64<A> {}
 unsafe impl<A: Sync> Sync for HashMapNZ64<A> {}
 
-#[derive(Clone, Copy)]
-struct Mixer(u64, u64);
-
-struct Slot<A> {
-  hash: u64,
-  value: MaybeUninit<A>,
-}
-
-/*
-pub enum Entry<'a, A: 'a> {
-  Vacant(VacantEntry<'a, A>),
-  Occupied(OccupiedEntry<'a, A>),
+pub struct OccupiedEntry<'a, A: 'a> {
+  map: &'a mut HashMapNZ64<A>,
+  ptr: *mut Slot<A>,
 }
 
 pub struct VacantEntry<'a, A: 'a> {
-  hashmap: &'a mut HashMapNZ64<A>,
-  slot: *mut Slot<A>,
-  variance: PhantomData<&'a mut A>,
+  map: &'a mut HashMapNZ64<A>,
+  key: NonZeroU64,
 }
 
-pub struct OccupiedEntry<'a, A: 'a> {
-  slot: *mut Slot<A>,
-  variance: PhantomData<&'a mut A>,
+pub enum Entry<'a, A: 'a> {
+  Occupied(OccupiedEntry<'a, A>),
+  Vacant(VacantEntry<'a, A>),
 }
-*/
 
 #[derive(Clone)]
 pub struct Iter<'a, A: 'a> {
@@ -98,23 +87,20 @@ impl<'a, A> ExactSizeIterator for Keys<'a, A> {}
 impl<'a, A> ExactSizeIterator for Values<'a, A> {}
 impl<'a, A> ExactSizeIterator for ValuesMut<'a, A> {}
 
+#[derive(Clone, Copy)]
+struct Mixer(u64, u64);
+
+struct Slot<A> {
+  hash: u64,
+  value: MaybeUninit<A>,
+}
+
 const INITIAL_S: usize = 60;
 const INITIAL_C: isize = 1 << (64 - INITIAL_S - 1);
 const INITIAL_D: usize = 1 << (64 - INITIAL_S);
 const INITIAL_E: usize = 8;
 const INITIAL_N: usize = INITIAL_D + INITIAL_E;
 const INITIAL_R: isize = INITIAL_C;
-
-// TODO:
-//
-// layout comment
-//
-// d = 2 ** u
-// e = 2 ** v
-// n = d + e
-//
-// t = a + (d - 1)
-// b = a + (n - 1)
 
 #[inline(always)]
 const unsafe fn spot(shift: usize, h: u64) -> isize {
@@ -282,7 +268,7 @@ impl<A> HashMapNZ64<A> {
 
   #[inline(never)]
   #[cold]
-  fn internal_initialize_table_and_insert(&mut self, key: NonZeroU64, value: A) {
+  fn internal_init_table_and_insert(&mut self, key: NonZeroU64, value: A) {
     // Calling this function on any valid map is actually safe, though it will
     // leak the contents of the old table, if any.
 
@@ -292,11 +278,9 @@ impl<A> HashMapNZ64<A> {
 
     let align = mem::align_of::<Slot<A>>();
     let size = INITIAL_N * mem::size_of::<Slot<A>>();
-
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
     let a = unsafe { std::alloc::alloc_zeroed(layout) } as *mut Slot<A>;
-
     if a.is_null() { match std::alloc::handle_alloc_error(layout) {} }
 
     let t = unsafe { a.add(INITIAL_D - 1) };
@@ -370,15 +354,12 @@ impl<A> HashMapNZ64<A> {
     assert!(new_n <= isize::MAX as usize / mem::size_of::<Slot<A>>());
 
     let align = mem::align_of::<Slot<A>>();
-
     let old_size = old_n * mem::size_of::<Slot<A>>();
     let new_size = new_n * mem::size_of::<Slot<A>>();
-
     let old_layout = unsafe { Layout::from_size_align_unchecked(old_size, align) };
     let new_layout = unsafe { Layout::from_size_align_unchecked(new_size, align) };
 
     let new_a = unsafe { std::alloc::alloc_zeroed(new_layout) } as *mut Slot<A>;
-
     if new_a.is_null() { match std::alloc::handle_alloc_error(new_layout) {} }
 
     // At this point, we know that allocating a new table has succeeded, so we
@@ -432,7 +413,7 @@ impl<A> HashMapNZ64<A> {
     let t = self.table as *mut Slot<A>;
 
     if t.is_null() {
-      self.internal_initialize_table_and_insert(key, value);
+      self.internal_init_table_and_insert(key, value);
       return None;
     }
 
@@ -512,20 +493,16 @@ impl<A> HashMapNZ64<A> {
     }
 
     unsafe { &mut *p }.hash = 0;
-
     self.space = self.space + 1;
 
     Some(v)
   }
 
-  /*
   #[inline]
   pub fn entry(&mut self, key: NonZeroU64) -> Entry<'_, A> {
     let t = self.table as *mut Slot<A>;
 
-    if t.is_null() { 
-      unimplemented!()
-    }
+    if t.is_null() { return Entry::Vacant(VacantEntry { map: self, key }); }
 
     let m = self.mixer;
     let s = self.shift;
@@ -539,20 +516,12 @@ impl<A> HashMapNZ64<A> {
       x = unsafe { &*p }.hash;
     }
 
-    if x != h {
-      Entry::Vacant(VacantEntry {
-        hashmap: self,
-        slot: p,
-        variance: PhantomData,
-      })
+    if x == h {
+      Entry::Occupied(OccupiedEntry { map: self, ptr: p, })
     } else {
-      Entry::Occupied(OccupiedEntry {
-        slot: p,
-        variance: PhantomData,
-      })
+      Entry::Vacant(VacantEntry { map: self, key })
     }
   }
-  */
 
   /// Removes every item from the map. Retains heap-allocated memory.
 
@@ -812,25 +781,58 @@ impl<A: fmt::Debug> fmt::Debug for HashMapNZ64<A> {
   }
 }
 
-/*
 impl<'a, A> OccupiedEntry<'a, A> {
-  pub fn value_mut(&mut self) -> &mut A {
-    unsafe { (&mut *self.slot).value.assume_init_mut() }
+  pub fn get(&self) -> &A {
+    unsafe { (&*self.ptr).value.assume_init_ref() }
   }
 
-  pub fn into_value_mut(self) -> &'a mut A {
-    unsafe { (&mut *self.slot).value.assume_init_mut() }
+  pub fn get_mut(&mut self) -> &mut A {
+    unsafe { (&mut *self.ptr).value.assume_init_mut() }
   }
 
-  pub fn replace(&mut self, value: A) -> A {
-    mem::replace(self.value_mut(), value)
+  pub fn into_mut(self) -> &'a mut A {
+    unsafe { (&mut *self.ptr).value.assume_init_mut() }
+  }
+
+  pub fn insert(&mut self, value: A) -> A {
+    mem::replace(self.get_mut(), value)
   }
 
   pub fn remove(self) -> A {
-    unimplemented!()
+    let mut p = self.ptr;
+    let o = self.map;
+    let t = o.table as *mut Slot<A>;
+    let s = o.shift;
+
+    let v = unsafe { (&mut *p).value.assume_init_read() };
+
+    loop {
+      let q = unsafe { p.add(1) };
+      let x = unsafe { &*q }.hash;
+
+      if p < unsafe { t.offset(- spot(s, x)) } || x == 0 { break; }
+
+      unsafe { &mut *p }.hash = x;
+      unsafe { &mut *p }.value = MaybeUninit::new(unsafe { (&*q).value.assume_init_read() });
+
+      p = q;
+    }
+
+    unsafe { &mut *p }.hash = 0;
+    o.space = o.space + 1;
+
+    v
   }
 }
-*/
+
+impl<'a, A> VacantEntry<'a, A> {
+  pub fn insert(self, value: A) -> &'a mut A {
+    // TODO: make this efficient
+
+    self.map.insert(self.key, value);
+    self.map.get_mut(self.key).unwrap()
+  }
+}
 
 impl<'a, A> Iterator for Iter<'a, A> {
   type Item = (NonZeroU64, &'a A);
