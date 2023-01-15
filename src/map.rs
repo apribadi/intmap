@@ -6,6 +6,8 @@
 //!
 //! design discussion
 
+#![deny(unsafe_op_in_unsafe_fn)]
+
 use crate::prelude::*;
 
 /// A fast hash map keyed by `NonZeroU64`s.
@@ -22,6 +24,7 @@ pub struct HashMapNZ64<A> {
 }
 
 unsafe impl<A: Send> Send for HashMapNZ64<A> {}
+
 unsafe impl<A: Sync> Sync for HashMapNZ64<A> {}
 
 pub struct OccupiedEntry<'a, A: 'a> {
@@ -76,15 +79,23 @@ pub struct ValuesMut<'a, A: 'a> {
 }
 
 impl<'a, A> FusedIterator for Iter<'a, A> {}
+
 impl<'a, A> FusedIterator for IterMut<'a, A> {}
+
 impl<'a, A> FusedIterator for Keys<'a, A> {}
+
 impl<'a, A> FusedIterator for Values<'a, A> {}
+
 impl<'a, A> FusedIterator for ValuesMut<'a, A> {}
 
 impl<'a, A> ExactSizeIterator for Iter<'a, A> {}
+
 impl<'a, A> ExactSizeIterator for IterMut<'a, A> {}
+
 impl<'a, A> ExactSizeIterator for Keys<'a, A> {}
+
 impl<'a, A> ExactSizeIterator for Values<'a, A> {}
+
 impl<'a, A> ExactSizeIterator for ValuesMut<'a, A> {}
 
 #[derive(Clone, Copy)]
@@ -268,12 +279,7 @@ impl<A> HashMapNZ64<A> {
 
   #[inline(never)]
   #[cold]
-  fn internal_init_table_and_insert(&mut self, key: NonZeroU64, value: A) {
-    // Calling this function on any valid map is actually safe, though it will
-    // leak the contents of the old table, if any.
-
-    // The following assert is of a constant expression.
-
+  unsafe fn internal_init_table_and_insert(&mut self, key: NonZeroU64, value: A) {
     assert!(INITIAL_N <= isize::MAX as usize / mem::size_of::<Slot<A>>());
 
     let align = mem::align_of::<Slot<A>>();
@@ -303,7 +309,7 @@ impl<A> HashMapNZ64<A> {
 
   #[inline(never)]
   #[cold]
-  fn internal_grow_table(&mut self) {
+  unsafe fn internal_grow_table(&mut self) {
     let old_t = self.table as *mut Slot<A>;
     let old_s = self.shift;
     let old_r = self.space;
@@ -322,7 +328,7 @@ impl<A> HashMapNZ64<A> {
     // *is* valid, but the `is_overflow` state *is not* valid.
     //
     // In the latter case, we temporarily remove the item in the final slot and
-    // restore it after allocation has succeeded.
+    // restore it after we have succeeded at everything that might panic.
 
     if is_overflow {
       unsafe { &mut *old_b }.hash = 0;
@@ -413,7 +419,8 @@ impl<A> HashMapNZ64<A> {
     let t = self.table as *mut Slot<A>;
 
     if t.is_null() {
-      self.internal_init_table_and_insert(key, value);
+      unsafe { self.internal_init_table_and_insert(key, value) };
+
       return None;
     }
 
@@ -450,7 +457,7 @@ impl<A> HashMapNZ64<A> {
     self.space = r;
     let b = self.check as *mut Slot<A>;
 
-    if r < 0 || p == b { self.internal_grow_table(); }
+    if r < 0 || p == b { unsafe { self.internal_grow_table() }; }
 
     None
   }
