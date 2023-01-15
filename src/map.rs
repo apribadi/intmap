@@ -629,15 +629,13 @@ impl<A> HashMapNZ64<A> {
   #[inline]
   pub fn iter(&self) -> Iter<'_, A> {
     let m = self.mixer;
-    let t = self.table;
     let s = self.shift;
     let r = self.space;
+    let b = self.check;
     let c = 1 << (64 - s - 1);
-    let d = 1 << (64 - s);
     let k = c - r;
-    let p = if t.is_null() { ptr::null() } else { unsafe { t.sub(d - 1) } };
 
-    Iter { mixer: m, len: k, ptr: p, variance: PhantomData }
+    Iter { mixer: m, len: k, ptr: b, variance: PhantomData }
   }
 
   /// Returns an iterator yielding each key and a mutable reference to its
@@ -751,9 +749,8 @@ impl<A> HashMapNZ64<A> {
     let align = mem::align_of::<Slot<A>>();
     let size = n * mem::size_of::<Slot<A>>();
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
-    let base = unsafe { NonNull::new_unchecked(a as *mut u8) };
 
-    Some((base, layout))
+    Some((unsafe { NonNull::new_unchecked(a as *mut u8) }, layout))
   }
 }
 
@@ -825,11 +822,11 @@ impl<'a, A> Iterator for Iter<'a, A> {
 
     if k == 0 { return None; }
 
-    let mut p = self.ptr;
+    let mut p = unsafe { self.ptr.sub(1) };
     let mut x = unsafe { &*p }.hash;
 
     while x == 0 {
-      p = unsafe { p.add(1) };
+      p = unsafe { p.sub(1) };
       x = unsafe { &*p }.hash;
     }
 
@@ -837,7 +834,7 @@ impl<'a, A> Iterator for Iter<'a, A> {
     let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
     let v = unsafe { (&*p).value.assume_init_ref() };
 
-    self.ptr = unsafe { p.add(1) };
+    self.ptr = p;
     self.len = k - 1;
 
     Some((x, v))
@@ -887,9 +884,9 @@ impl<'a, A> Iterator for Keys<'a, A> {
 
   #[inline]
   fn next(&mut self) -> Option<Self::Item> {
-    let n = self.len;
+    let k = self.len;
 
-    if n == 0 { return None; }
+    if k == 0 { return None; }
 
     let mut p = self.ptr;
     let mut x = unsafe { &*p }.hash;
@@ -903,7 +900,7 @@ impl<'a, A> Iterator for Keys<'a, A> {
     let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
 
     self.ptr = unsafe { p.add(1) };
-    self.len = n - 1;
+    self.len = k - 1;
 
     Some(x)
   }
