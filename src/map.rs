@@ -644,15 +644,13 @@ impl<A> HashMapNZ64<A> {
   #[inline]
   pub fn iter_mut(&mut self) -> IterMut<'_, A> {
     let m = self.mixer;
-    let t = self.table as *mut Slot<A>;
     let s = self.shift;
     let r = self.space;
+    let b = self.check as *mut Slot<A>;
     let c = 1 << (64 - s - 1);
-    let d = 1 << (64 - s);
     let k = c - r;
-    let p = if t.is_null() { ptr::null_mut() } else { unsafe { t.sub(d - 1) } };
 
-    IterMut { mixer: m, len: k, ptr: p, variance: PhantomData }
+    IterMut { mixer: m, len: k, ptr: b, variance: PhantomData }
   }
 
   /// Returns an iterator yielding each key. The iterator item type is
@@ -661,15 +659,13 @@ impl<A> HashMapNZ64<A> {
   #[inline]
   pub fn keys(&self) -> Keys<'_, A> {
     let m = self.mixer;
-    let t = self.table;
     let s = self.shift;
     let r = self.space;
+    let b = self.check;
     let c = 1 << (64 - s - 1);
-    let d = 1 << (64 - s);
     let k = c - r;
-    let p = if t.is_null() { ptr::null() } else { unsafe { t.sub(d - 1) } };
 
-    Keys { mixer: m, len: k, ptr: p, variance: PhantomData }
+    Keys { mixer: m, len: k, ptr: b, variance: PhantomData }
   }
 
   /// Returns an iterator yielding a reference to each value. The iterator item
@@ -677,15 +673,13 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   pub fn values(&self) -> Values<'_, A> {
-    let t = self.table;
     let s = self.shift;
     let r = self.space;
+    let b = self.check;
     let c = 1 << (64 - s - 1);
-    let d = 1 << (64 - s);
     let k = c - r;
-    let p = if t.is_null() { ptr::null() } else { unsafe { t.sub(d - 1) } };
 
-    Values { len: k, ptr: p, variance: PhantomData }
+    Values { len: k, ptr: b, variance: PhantomData }
   }
 
   /// Returns an iterator yielding a mutable reference to each value. The
@@ -693,15 +687,13 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   pub fn values_mut(&mut self) -> ValuesMut<'_, A> {
-    let t = self.table as *mut Slot<A>;
     let s = self.shift;
     let r = self.space;
+    let b = self.check as *mut Slot<A>;
     let c = 1 << (64 - s - 1);
-    let d = 1 << (64 - s);
     let k = c - r;
-    let p = if t.is_null() { ptr::null_mut() } else { unsafe { t.sub(d - 1) } };
 
-    ValuesMut { len: k, ptr: p, variance: PhantomData }
+    ValuesMut { len: k, ptr: b, variance: PhantomData }
   }
 
   #[inline]
@@ -855,11 +847,11 @@ impl<'a, A> Iterator for IterMut<'a, A> {
 
     if k == 0 { return None; }
 
-    let mut p = self.ptr;
+    let mut p = unsafe { self.ptr.sub(1) };
     let mut x = unsafe { &*p }.hash;
 
     while x == 0 {
-      p = unsafe { p.add(1) };
+      p = unsafe { p.sub(1) };
       x = unsafe { &*p }.hash;
     }
 
@@ -867,7 +859,7 @@ impl<'a, A> Iterator for IterMut<'a, A> {
     let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
     let v = unsafe { (&mut *p).value.assume_init_mut() };
 
-    self.ptr = unsafe { p.add(1) };
+    self.ptr = p;
     self.len = k - 1;
 
     Some((x, v))
@@ -888,18 +880,18 @@ impl<'a, A> Iterator for Keys<'a, A> {
 
     if k == 0 { return None; }
 
-    let mut p = self.ptr;
+    let mut p = unsafe { self.ptr.sub(1) };
     let mut x = unsafe { &*p }.hash;
 
     while x == 0 {
-      p = unsafe { p.add(1) };
+      p = unsafe { p.sub(1) };
       x = unsafe { &*p }.hash;
     }
 
     let m = self.mixer;
     let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
 
-    self.ptr = unsafe { p.add(1) };
+    self.ptr = p;
     self.len = k - 1;
 
     Some(x)
@@ -920,17 +912,17 @@ impl<'a, A> Iterator for Values<'a, A> {
 
     if k == 0 { return None; }
 
-    let mut p = self.ptr;
+    let mut p = unsafe { self.ptr.sub(1) };
     let mut x = unsafe { &*p }.hash;
 
     while x == 0 {
-      p = unsafe { p.add(1) };
+      p = unsafe { p.sub(1) };
       x = unsafe { &*p }.hash;
     }
 
     let v = unsafe { (&*p).value.assume_init_ref() };
 
-    self.ptr = unsafe { p.add(1) };
+    self.ptr = p;
     self.len = k - 1;
 
     Some(v)
@@ -951,17 +943,17 @@ impl<'a, A> Iterator for ValuesMut<'a, A> {
 
     if k == 0 { return None; }
 
-    let mut p = self.ptr;
+    let mut p = unsafe { self.ptr.sub(1) };
     let mut x = unsafe { &*p }.hash;
 
     while x == 0 {
-      p = unsafe { p.add(1) };
+      p = unsafe { p.sub(1) };
       x = unsafe { &*p }.hash;
     }
 
     let v = unsafe { (&mut *p).value.assume_init_mut() };
 
-    self.ptr = unsafe { p.add(1) };
+    self.ptr = p;
     self.len = k - 1;
 
     Some(v)
