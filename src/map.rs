@@ -270,21 +270,14 @@ impl<A> HashMapNZ64<A> {
     Some(unsafe { (&mut *p).value.assume_init_mut() })
   }
 
-  #[inline]
-  pub fn get_many_mut<const N: usize>(&mut self, keys: [NonZeroU64; N]) -> Option<[&mut A; N]> {
-    let _ = self;
-    let _ = keys;
-
-    unimplemented!()
-  }
-
   /// Inserts the given key and value into the map. Returns the previous value
   /// associated with given key, if one was present.
   ///
   /// # Panics
   ///
-  /// Panics when allocation fails. If that happens, it is possible for arbitrary items from the
-  /// map to leak, but the map will remain in a valid state.
+  /// Panics when allocation fails. If that happens, it is possible for the map
+  /// to leak an arbitrary set of items, but the map will remain in a valid
+  /// state.
 
   #[inline]
   pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<A> {
@@ -487,7 +480,7 @@ impl<A> HashMapNZ64<A> {
       let q = unsafe { p.add(1) };
       let x = unsafe { &*q }.hash;
 
-      if p < unsafe { t.offset(- spot(s, x)) } || x == 0 { break; }
+      if p < unsafe { t.offset(- spot(s, x)) } || /* unlikely */ x == 0 { break; }
 
       unsafe { &mut *p }.hash = x;
       unsafe { &mut *p }.value = MaybeUninit::new(unsafe { (&*q).value.assume_init_read() });
@@ -558,15 +551,17 @@ impl<A> HashMapNZ64<A> {
       // WARNING!
       //
       // This loop must be careful to leave the map in a valid state even if a
-      // call to `drop` panics. In particular, traversing the table in reverse
-      // order means that we don't remove an item that is currently displacing
-      // another item.
+      // call to `drop` panics. In particular, because we traverse the table in
+      // reverse order, we ensure that we don't remove an item that is
+      // currently displacing another item.
 
       let mut p = b;
       let mut k = k;
       let mut r = r;
 
       loop {
+        p = unsafe { p.sub(1) };
+
         if unsafe { &mut *p }.hash != 0 {
           unsafe { &mut *p }.hash = 0;
           k = k - 1;
@@ -575,8 +570,6 @@ impl<A> HashMapNZ64<A> {
           unsafe { (&mut *p).value.assume_init_drop() };
           if k == 0 { break; }
         }
-
-        p = unsafe { p.sub(1) };
       }
     } else {
       let d = 1 << (64 - s);
