@@ -6,8 +6,6 @@
 //!
 //! design discussion
 
-#![deny(unsafe_op_in_unsafe_fn)]
-
 use crate::prelude::*;
 
 /// A fast hash map keyed by `NonZeroU64`s.
@@ -27,30 +25,30 @@ unsafe impl<A: Send> Send for HashMapNZ64<A> {}
 
 unsafe impl<A: Sync> Sync for HashMapNZ64<A> {}
 
-pub struct OccupiedEntry<'a, A: 'a> {
+pub struct OccupiedEntry<'a, A> {
   map: &'a mut HashMapNZ64<A>,
   ptr: *mut Slot<A>,
 }
 
-pub struct VacantEntry<'a, A: 'a> {
+pub struct VacantEntry<'a, A> {
   map: &'a mut HashMapNZ64<A>,
   key: NonZeroU64,
 }
 
-pub enum Entry<'a, A: 'a> {
+pub enum Entry<'a, A> {
   Occupied(OccupiedEntry<'a, A>),
   Vacant(VacantEntry<'a, A>),
 }
 
 #[derive(Clone)]
-pub struct Iter<'a, A: 'a> {
+pub struct Iter<'a, A> {
   mixer: Mixer,
   len: usize,
   ptr: *const Slot<A>,
   variance: PhantomData<&'a A>,
 }
 
-pub struct IterMut<'a, A: 'a> {
+pub struct IterMut<'a, A> {
   mixer: Mixer,
   len: usize,
   ptr: *mut Slot<A>,
@@ -58,7 +56,7 @@ pub struct IterMut<'a, A: 'a> {
 }
 
 #[derive(Clone)]
-pub struct Keys<'a, A: 'a> {
+pub struct Keys<'a, A> {
   mixer: Mixer,
   len: usize,
   ptr: *const Slot<A>,
@@ -66,13 +64,13 @@ pub struct Keys<'a, A: 'a> {
 }
 
 #[derive(Clone)]
-pub struct Values<'a, A: 'a> {
+pub struct Values<'a, A> {
   len: usize,
   ptr: *const Slot<A>,
   variance: PhantomData<&'a A>,
 }
 
-pub struct ValuesMut<'a, A: 'a> {
+pub struct ValuesMut<'a, A> {
   len: usize,
   ptr: *mut Slot<A>,
   variance: PhantomData<&'a mut A>,
