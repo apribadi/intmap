@@ -183,8 +183,9 @@ impl<A> HashMapNZ64<A> {
   pub fn len(&self) -> usize {
     let s = self.shift;
     let r = self.space;
-
-    (1 << (64 - s - 1)) - r
+    let c = 1 << (64 - s - 1);
+    let k = c - r;
+    k
   }
 
   /// Returns whether the map contains zero items.
@@ -545,40 +546,45 @@ impl<A> HashMapNZ64<A> {
 
     if t.is_null() { return; }
 
+    let s = self.shift;
+    let r = self.space;
+    let b = self.check as *mut Slot<A>;
+    let c = 1 << (64 - s - 1);
+    let k = c - r;
+
+    if k == 0 { return; }
+
     if mem::needs_drop::<A>() {
-      let s = self.shift;
-      let b = self.check;
-      let d = 1 << (64 - s);
-      let a = unsafe { t.sub(d - 1) };
+      // WARNING!
+      //
+      // This loop must be careful to leave the map in a valid state even if a
+      // call to `drop` panics. In particular, traversing the table in reverse
+      // order means that we don't remove an item that is currently displacing
+      // another item.
 
-      // Place table into a consistent state before we run `drop`s, in case
-      // `drop` panics.
+      let mut p = b;
+      let mut k = k;
+      let mut r = r;
 
-      self.table = ptr::null();
-      self.shift = INITIAL_S;
-      self.space = INITIAL_R;
-      self.check = ptr::null();
-
-      each_mut(a, b, |p| {
+      loop {
         if unsafe { &mut *p }.hash != 0 {
           unsafe { &mut *p }.hash = 0;
+          k = k - 1;
+          r = r + 1;
+          self.space = r;
           unsafe { (&mut *p).value.assume_init_drop() };
+          if k == 0 { break; }
         }
-      });
 
-      self.table = t;
-      self.shift = s;
-      self.space = 1 << (64 - s - 1);
-      self.check = b;
+        p = unsafe { p.sub(1) };
+      }
     } else {
-      let s = self.shift;
-      let b = self.check;
       let d = 1 << (64 - s);
       let a = unsafe { t.sub(d - 1) };
 
       each_mut(a, b, |p| { unsafe { &mut *p }.hash = 0; });
 
-      self.space = 1 << (64 - s - 1);
+      self.space = c;
     }
   }
 
@@ -633,8 +639,9 @@ impl<A> HashMapNZ64<A> {
     let t = self.table;
     let s = self.shift;
     let r = self.space;
-    let k = (1 << (64 - s - 1)) - r;
+    let c = 1 << (64 - s - 1);
     let d = 1 << (64 - s);
+    let k = c - r;
     let p = if t.is_null() { ptr::null() } else { unsafe { t.sub(d - 1) } };
 
     Iter { mixer: m, len: k, ptr: p, variance: PhantomData }
@@ -649,8 +656,9 @@ impl<A> HashMapNZ64<A> {
     let t = self.table as *mut Slot<A>;
     let s = self.shift;
     let r = self.space;
-    let k = (1 << (64 - s - 1)) - r;
+    let c = 1 << (64 - s - 1);
     let d = 1 << (64 - s);
+    let k = c - r;
     let p = if t.is_null() { ptr::null_mut() } else { unsafe { t.sub(d - 1) } };
 
     IterMut { mixer: m, len: k, ptr: p, variance: PhantomData }
@@ -665,8 +673,9 @@ impl<A> HashMapNZ64<A> {
     let t = self.table;
     let s = self.shift;
     let r = self.space;
-    let k = (1 << (64 - s - 1)) - r;
+    let c = 1 << (64 - s - 1);
     let d = 1 << (64 - s);
+    let k = c - r;
     let p = if t.is_null() { ptr::null() } else { unsafe { t.sub(d - 1) } };
 
     Keys { mixer: m, len: k, ptr: p, variance: PhantomData }
@@ -680,8 +689,9 @@ impl<A> HashMapNZ64<A> {
     let t = self.table;
     let s = self.shift;
     let r = self.space;
-    let k = (1 << (64 - s - 1)) - r;
+    let c = 1 << (64 - s - 1);
     let d = 1 << (64 - s);
+    let k = c - r;
     let p = if t.is_null() { ptr::null() } else { unsafe { t.sub(d - 1) } };
 
     Values { len: k, ptr: p, variance: PhantomData }
@@ -695,8 +705,9 @@ impl<A> HashMapNZ64<A> {
     let t = self.table as *mut Slot<A>;
     let s = self.shift;
     let r = self.space;
-    let k = (1 << (64 - s - 1)) - r;
+    let c = 1 << (64 - s - 1);
     let d = 1 << (64 - s);
+    let k = c - r;
     let p = if t.is_null() { ptr::null_mut() } else { unsafe { t.sub(d - 1) } };
 
     ValuesMut { len: k, ptr: p, variance: PhantomData }
@@ -747,9 +758,9 @@ impl<A> HashMapNZ64<A> {
     let align = mem::align_of::<Slot<A>>();
     let size = n * mem::size_of::<Slot<A>>();
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
-    let a = unsafe { NonNull::new_unchecked(a as *mut u8) };
+    let base = unsafe { NonNull::new_unchecked(a as *mut u8) };
 
-    Some((a, layout))
+    Some((base, layout))
   }
 }
 
