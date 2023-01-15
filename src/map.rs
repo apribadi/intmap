@@ -350,7 +350,7 @@ impl<A> HashMapNZ64<A> {
     unsafe { &mut *p }.hash = h;
     unsafe { &mut *p }.value = MaybeUninit::new(value);
 
-    // We don't modify the table until after we know that allocation won't fail.
+    // We only modify `self` after we know that allocation hasn't failed.
 
     self.table = t;
     self.space = INITIAL_R - 1;
@@ -364,8 +364,8 @@ impl<A> HashMapNZ64<A> {
     //
     // Preserve invariants even if an assertion fails.
     //
-    // If the `check` spot is occupied, temporarily remove the item there, then replace it at the
-    // end.
+    // If the `check` spot is occupied, temporarily remove the item there, then
+    // replace it at the end.
 
     let old_t = self.table as *mut Slot<A>;
     let old_s = self.shift;
@@ -550,10 +550,11 @@ impl<A> HashMapNZ64<A> {
     if mem::needs_drop::<A>() {
       // WARNING!
       //
-      // This loop must be careful to leave the map in a valid state even if a
-      // call to `drop` panics. In particular, because we traverse the table in
-      // reverse order, we ensure that we don't remove an item that is
-      // currently displacing another item.
+      // We must be careful to leave the map in a valid state even if a call to
+      // `drop` panics.
+      //
+      // Here, we traverse the table in reverse order to ensure that we don't
+      // remove an item that is currently displacing another item.
 
       let mut p = b;
       let mut k = k;
@@ -596,18 +597,19 @@ impl<A> HashMapNZ64<A> {
     let n = d + e;
     let a = unsafe { t.sub(d - 1) };
 
-    // If we're in `Self::drop` and `self` has been subject to scalar
-    // replacement of aggregates, then the following are all dead stores and
-    // should be optimized away.
-
     self.table = ptr::null();
     self.shift = INITIAL_S;
     self.space = INITIAL_R;
     self.check = ptr::null();
 
     if mem::needs_drop::<A>() {
-      // We have already placed `self` into a valid configuration, so if
-      // `A::drop` panics we can just leak the table.
+      // WARNING!
+      //
+      // We must be careful to leave the map in a valid state even if a call to
+      // `drop` panics.
+      //
+      // Here, we have already put `self` into the valid initial state, so if a
+      // call to `drop` panics then we can just safely leak the table.
 
       each_mut(a, b, |p| {
         if unsafe { &mut *p }.hash != 0 {
@@ -822,8 +824,7 @@ impl<'a, A> Iterator for Iter<'a, A> {
       x = unsafe { &*p }.hash;
     }
 
-    let m = self.mixer;
-    let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
+    let x = self.mixer.hash(unsafe { NonZeroU64::new_unchecked(x) });
     let v = unsafe { (&*p).value.assume_init_ref() };
 
     self.ptr = p;
@@ -855,8 +856,7 @@ impl<'a, A> Iterator for IterMut<'a, A> {
       x = unsafe { &*p }.hash;
     }
 
-    let m = self.mixer;
-    let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
+    let x = self.mixer.hash(unsafe { NonZeroU64::new_unchecked(x) });
     let v = unsafe { (&mut *p).value.assume_init_mut() };
 
     self.ptr = p;
@@ -888,8 +888,7 @@ impl<'a, A> Iterator for Keys<'a, A> {
       x = unsafe { &*p }.hash;
     }
 
-    let m = self.mixer;
-    let x = m.hash(unsafe { NonZeroU64::new_unchecked(x) });
+    let x = self.mixer.hash(unsafe { NonZeroU64::new_unchecked(x) });
 
     self.ptr = p;
     self.len = k - 1;
