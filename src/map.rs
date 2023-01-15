@@ -220,7 +220,7 @@ impl<A> HashMapNZ64<A> {
       x = unsafe { &*p }.hash;
     }
 
-    return x == h;
+    x == h
   }
 
   /// Returns a reference to the value associated with the given key, if
@@ -498,7 +498,7 @@ impl<A> HashMapNZ64<A> {
     }
 
     unsafe { &mut *p }.hash = 0;
-    self.space = self.space + 1;
+    self.space += 1;
 
     Some(v)
   }
@@ -564,8 +564,8 @@ impl<A> HashMapNZ64<A> {
 
         if unsafe { &mut *p }.hash != 0 {
           unsafe { &mut *p }.hash = 0;
-          k = k - 1;
-          r = r + 1;
+          k -= 1;
+          r += 1;
           self.space = r;
           unsafe { (&mut *p).value.assume_init_drop() };
           if k == 0 { break; }
@@ -824,7 +824,7 @@ impl<'a, A> OccupiedEntry<'a, A> {
     }
 
     unsafe { &mut *p }.hash = 0;
-    o.space = o.space + 1;
+    o.space += 1;
 
     v
   }

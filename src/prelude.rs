@@ -20,6 +20,6 @@ pub use crate::rng::Rng;
 pub use crate::rng;
 
 #[inline(always)]
-pub fn each_mut<A, F>(mut p: *mut A, q: *const A, mut f: F) where F: FnMut(*mut A) -> () {
+pub fn each_mut<A, F>(mut p: *mut A, q: *const A, mut f: F) where F: FnMut(*mut A) {
   loop { f(p); if ptr::eq(p, q) { break; } p = p.wrapping_add(1); }
 }
