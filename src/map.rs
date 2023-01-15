@@ -98,13 +98,12 @@ impl<'a, A> ExactSizeIterator for Keys<'a, A> {}
 impl<'a, A> ExactSizeIterator for Values<'a, A> {}
 impl<'a, A> ExactSizeIterator for ValuesMut<'a, A> {}
 
-const INITIAL_U: usize = 4;
-const INITIAL_V: usize = 3;
-const INITIAL_D: usize = 1 << INITIAL_U;
-const INITIAL_E: usize = 1 << INITIAL_V;
+const INITIAL_S: usize = 60;
+const INITIAL_C: isize = 1 << (64 - INITIAL_S - 1);
+const INITIAL_D: usize = 1 << (64 - INITIAL_S);
+const INITIAL_E: usize = 8;
 const INITIAL_N: usize = INITIAL_D + INITIAL_E;
-const INITIAL_S: usize = 64 - INITIAL_U;
-const INITIAL_R: isize = 1 << (INITIAL_U - 1);
+const INITIAL_R: isize = INITIAL_C;
 
 #[inline(always)]
 const unsafe fn spot(shift: usize, h: u64) -> isize {
