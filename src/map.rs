@@ -317,65 +317,9 @@ impl<A> HashMapNZ64<A> {
     self.check = b;
   }
 
-  /// Inserts the given key and value into the map. Returns the previous value
-  /// associated with given key, if one was present.
-  ///
-  /// # Panics
-  ///
-  /// Panics when allocation fails. If that happens, it is possible for the map
-  /// to leak an arbitrary set of items, but the map will remain in a valid
-  /// state.
-
-  #[inline]
-  pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<A> {
-    let t = self.table as *mut Slot<A>;
-
-    if t.is_null() {
-      self.internal_initialize_table_and_insert(key, value);
-      return None;
-    }
-
-    let m = self.mixer;
-    let s = self.shift;
-    let h = u64::from(m.hash(key));
-
-    let mut p = unsafe { t.offset(- spot(s, h)) };
-    let mut x = unsafe { &*p }.hash;
-
-    while x > h {
-      p = unsafe { p.add(1) };
-      x = unsafe { &*p }.hash;
-    }
-
-    if x == h {
-      let v = mem::replace(unsafe { (&mut *p).value.assume_init_mut() }, value);
-      return Some(v);
-    }
-
-    let mut v = value;
-
-    unsafe { &mut *p }.hash = h;
-
-    while x != 0 {
-      v = mem::replace(unsafe { (&mut *p).value.assume_init_mut() }, v);
-      p = unsafe { p.add(1) };
-      x = mem::replace(&mut unsafe { &mut *p }.hash, x);
-    }
-
-    unsafe { &mut *p }.value = MaybeUninit::new(v);
-
-    let r = self.space - 1;
-    self.space = r;
-    let b = self.check as *mut Slot<A>;
-
-    if r < 0 || p == b { self.insert_cold_grow_table(); }
-
-    None
-  }
-
   #[inline(never)]
   #[cold]
-  fn insert_cold_grow_table(&mut self) {
+  fn internal_grow_table(&mut self) {
     let old_t = self.table as *mut Slot<A>;
     let old_s = self.shift;
     let old_r = self.space;
@@ -472,6 +416,62 @@ impl<A> HashMapNZ64<A> {
     // The map is now in a valid state, even if `dealloc` panics.
 
     unsafe { std::alloc::dealloc(old_a as *mut u8, old_layout) };
+  }
+
+  /// Inserts the given key and value into the map. Returns the previous value
+  /// associated with given key, if one was present.
+  ///
+  /// # Panics
+  ///
+  /// Panics when allocation fails. If that happens, it is possible for the map
+  /// to leak an arbitrary set of items, but the map will remain in a valid
+  /// state.
+
+  #[inline]
+  pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<A> {
+    let t = self.table as *mut Slot<A>;
+
+    if t.is_null() {
+      self.internal_initialize_table_and_insert(key, value);
+      return None;
+    }
+
+    let m = self.mixer;
+    let s = self.shift;
+    let h = u64::from(m.hash(key));
+
+    let mut p = unsafe { t.offset(- spot(s, h)) };
+    let mut x = unsafe { &*p }.hash;
+
+    while x > h {
+      p = unsafe { p.add(1) };
+      x = unsafe { &*p }.hash;
+    }
+
+    if x == h {
+      let v = mem::replace(unsafe { (&mut *p).value.assume_init_mut() }, value);
+      return Some(v);
+    }
+
+    let mut v = value;
+
+    unsafe { &mut *p }.hash = h;
+
+    while x != 0 {
+      v = mem::replace(unsafe { (&mut *p).value.assume_init_mut() }, v);
+      p = unsafe { p.add(1) };
+      x = mem::replace(&mut unsafe { &mut *p }.hash, x);
+    }
+
+    unsafe { &mut *p }.value = MaybeUninit::new(v);
+
+    let r = self.space - 1;
+    self.space = r;
+    let b = self.check as *mut Slot<A>;
+
+    if r < 0 || p == b { self.internal_grow_table(); }
+
+    None
   }
 
   /// Removes the given key from the map. Returns the previous value associated
