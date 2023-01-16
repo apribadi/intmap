@@ -66,7 +66,9 @@ fn test_iter() -> Result<(), std::fmt::Error> {
 
   writeln!(s, "{:?}", a)?;
 
-  t.clear();
+  // t.reset();
+
+  let _ = t.into_iter().collect::<Vec<_>>();
 
   expect![[r#"
       [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]

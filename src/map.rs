@@ -6,6 +6,10 @@
 //!
 //! design discussion
 
+// TODO: drain
+// TODO: clone
+// TODO: retain
+
 use crate::prelude::*;
 
 /// A fast hash map keyed by `NonZeroU64`s.
@@ -25,17 +29,25 @@ unsafe impl<A: Send> Send for HashMapNZ64<A> {}
 
 unsafe impl<A: Sync> Sync for HashMapNZ64<A> {}
 
-pub struct OccupiedEntry<'a, A> {
+#[derive(Clone, Copy)]
+struct Mixer(u64, u64);
+
+struct Slot<A> {
+  hash: u64,
+  value: MaybeUninit<A>,
+}
+
+pub struct OccupiedEntry<'a, A: 'a> {
   map: &'a mut HashMapNZ64<A>,
   ptr: *mut Slot<A>,
 }
 
-pub struct VacantEntry<'a, A> {
+pub struct VacantEntry<'a, A: 'a> {
   map: &'a mut HashMapNZ64<A>,
   key: NonZeroU64,
 }
 
-pub enum Entry<'a, A> {
+pub enum Entry<'a, A: 'a> {
   Occupied(OccupiedEntry<'a, A>),
   Vacant(VacantEntry<'a, A>),
 }
@@ -43,56 +55,56 @@ pub enum Entry<'a, A> {
 /// Iterator returned by [`HashMapNZ64::iter`].
 
 #[derive(Clone)]
-pub struct Iter<'a, A> {
-  mixer: Mixer,
+pub struct Iter<'a, A: 'a> {
   len: usize,
   ptr: *const Slot<A>,
-  variance: PhantomData<&'a A>,
+  rev: Mixer,
+  var: PhantomData<&'a A>,
 }
 
 /// Iterator returned by [`HashMapNZ64::iter_mut`].
 
-pub struct IterMut<'a, A> {
-  mixer: Mixer,
+pub struct IterMut<'a, A: 'a> {
   len: usize,
   ptr: *mut Slot<A>,
-  variance: PhantomData<&'a mut A>,
+  rev: Mixer,
+  var: PhantomData<&'a mut A>,
 }
 
 /// Iterator returned by [`HashMapNZ64::keys`].
 
 #[derive(Clone)]
-pub struct Keys<'a, A> {
-  mixer: Mixer,
+pub struct Keys<'a, A: 'a> {
   len: usize,
   ptr: *const Slot<A>,
-  variance: PhantomData<&'a A>,
+  rev: Mixer,
+  var: PhantomData<&'a A>,
 }
 
 /// Iterator returned by [`HashMapNZ64::values`].
 
 #[derive(Clone)]
-pub struct Values<'a, A> {
+pub struct Values<'a, A: 'a> {
   len: usize,
   ptr: *const Slot<A>,
-  variance: PhantomData<&'a A>,
+  var: PhantomData<&'a A>,
 }
 
 /// Iterator returned by [`HashMapNZ64::values_mut`].
 
-pub struct ValuesMut<'a, A> {
+pub struct ValuesMut<'a, A: 'a> {
   len: usize,
   ptr: *mut Slot<A>,
-  variance: PhantomData<&'a mut A>,
+  var: PhantomData<&'a mut A>,
 }
 
 /// Iterator returned by [`HashMapNZ64::into_iter`].
 
 pub struct IntoIter<A> {
-  mixer: Mixer,
+  rev: Mixer,
   len: usize,
   ptr: *const Slot<A>, // covariant in `A`
-  to_dealloc: (*mut u8, usize),
+  mem: (*mut u8, usize),
 }
 
 /// Iterator returned by [`HashMapNZ64::into_values`].
@@ -100,7 +112,7 @@ pub struct IntoIter<A> {
 pub struct IntoValues<A> {
   len: usize,
   ptr: *const Slot<A>, // covariant in `A`
-  to_dealloc: (*mut u8, usize),
+  mem: (*mut u8, usize),
 }
 
 impl<'a, A> FusedIterator for Iter<'a, A> {}
@@ -122,14 +134,6 @@ impl<'a, A> ExactSizeIterator for Keys<'a, A> {}
 impl<'a, A> ExactSizeIterator for Values<'a, A> {}
 
 impl<'a, A> ExactSizeIterator for ValuesMut<'a, A> {}
-
-#[derive(Clone, Copy)]
-struct Mixer(u64, u64);
-
-struct Slot<A> {
-  hash: u64,
-  value: MaybeUninit<A>,
-}
 
 const INITIAL_S: usize = 60;
 const INITIAL_C: isize = 1 << (64 - INITIAL_S - 1);
@@ -354,6 +358,8 @@ impl<A> HashMapNZ64<A> {
     //
     // In the latter case, we temporarily remove the item in the final slot and
     // restore it after we have succeeded at everything that might panic.
+    //
+    // This is an instance of the infamous PPYP design pattern.
 
     if is_overflow {
       unsafe { &mut *old_b }.hash = 0;
@@ -663,7 +669,7 @@ impl<A> HashMapNZ64<A> {
     let c = 1 << (64 - s - 1);
     let k = (c - r) as usize;
 
-    Iter { mixer: m, len: k, ptr: b, variance: PhantomData }
+    Iter { len: k, ptr: b, rev: m, var: PhantomData }
   }
 
   /// Returns an iterator yielding each key and a mutable reference to its
@@ -678,7 +684,7 @@ impl<A> HashMapNZ64<A> {
     let c = 1 << (64 - s - 1);
     let k = (c - r) as usize;
 
-    IterMut { mixer: m, len: k, ptr: b, variance: PhantomData }
+    IterMut { len: k, ptr: b, rev: m, var: PhantomData }
   }
 
   /// Returns an iterator yielding each key. The iterator item type is
@@ -693,7 +699,7 @@ impl<A> HashMapNZ64<A> {
     let c = 1 << (64 - s - 1);
     let k = (c - r) as usize;
 
-    Keys { mixer: m, len: k, ptr: b, variance: PhantomData }
+    Keys { len: k, ptr: b, rev: m, var: PhantomData }
   }
 
   /// Returns an iterator yielding a reference to each value. The iterator item
@@ -707,7 +713,7 @@ impl<A> HashMapNZ64<A> {
     let c = 1 << (64 - s - 1);
     let k = (c - r) as usize;
 
-    Values { len: k, ptr: b, variance: PhantomData }
+    Values { len: k, ptr: b, var: PhantomData }
   }
 
   /// Returns an iterator yielding a mutable reference to each value. The
@@ -721,7 +727,7 @@ impl<A> HashMapNZ64<A> {
     let c = 1 << (64 - s - 1);
     let k = (c - r) as usize;
 
-    ValuesMut { len: k, ptr: b, variance: PhantomData }
+    ValuesMut { len: k, ptr: b, var: PhantomData }
   }
 
   /// Returns an iterator yielding each value and consuming the map. The
@@ -729,8 +735,11 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   pub fn into_values(self) -> IntoValues<A> {
-    let o = core::mem::ManuallyDrop::new(self);
+    let o = ManuallyDrop::new(self);
     let t = o.table;
+
+    if t.is_null() { return IntoValues { len: 0, ptr: ptr::null(), mem: (ptr::null_mut(), 0) }; }
+
     let s = o.shift;
     let r = o.space;
     let b = o.check;
@@ -739,10 +748,9 @@ impl<A> HashMapNZ64<A> {
     let e = unsafe { b.offset_from(t) } as usize;
     let n = d + e;
     let k = (c - r) as usize;
-    let a = unsafe { t.sub(d - 1) };
-    let to_dealloc = (a as *mut u8, n * mem::size_of::<Slot<A>>());
+    let a = unsafe { t.sub(d - 1) } as *mut u8;
 
-    IntoValues { len: k, ptr: b, to_dealloc }
+    IntoValues { len: k, ptr: b, mem: (a, n * mem::size_of::<Slot<A>>()) }
   }
 
   #[inline]
@@ -825,9 +833,12 @@ impl<A> IntoIterator for HashMapNZ64<A> {
 
   #[inline]
   fn into_iter(self) -> IntoIter<A> {
-    let o = core::mem::ManuallyDrop::new(self);
+    let o = ManuallyDrop::new(self);
     let m = o.mixer;
     let t = o.table;
+
+    if t.is_null() { return IntoIter { rev: m, len: 0, ptr: ptr::null(), mem: (ptr::null_mut(), 0) }; }
+
     let s = o.shift;
     let r = o.space;
     let b = o.check;
@@ -836,10 +847,9 @@ impl<A> IntoIterator for HashMapNZ64<A> {
     let e = unsafe { b.offset_from(t) } as usize;
     let n = d + e;
     let k = (c - r) as usize;
-    let a = unsafe { t.sub(d - 1) };
-    let to_dealloc = (a as *mut u8, n * mem::size_of::<Slot<A>>());
+    let a = unsafe { t.sub(d - 1) } as *mut u8;
 
-    IntoIter { mixer: m, len: k, ptr: b, to_dealloc }
+    IntoIter { rev: m, len: k, ptr: b, mem: (a, n * mem::size_of::<Slot<A>>()) }
   }
 }
 
@@ -888,7 +898,7 @@ impl<'a, A> OccupiedEntry<'a, A> {
       let q = unsafe { p.add(1) };
       let x = unsafe { &*q }.hash;
 
-      if p < unsafe { t.offset(- spot(s, x)) } || x == 0 { break; }
+      if p < unsafe { t.offset(- spot(s, x)) } || expect(x == 0, false) { break; }
 
       unsafe { &mut *p }.hash = x;
       unsafe { &mut *p }.value = MaybeUninit::new(unsafe { (&*q).value.assume_init_read() });
@@ -929,11 +939,11 @@ impl<'a, A> Iterator for Iter<'a, A> {
       x = unsafe { &*p }.hash;
     }
 
-    let x = self.mixer.hash(unsafe { NonZeroU64::new_unchecked(x) });
+    let x = self.rev.hash(unsafe { NonZeroU64::new_unchecked(x) });
     let v = unsafe { (&*p).value.assume_init_ref() };
 
-    self.ptr = p;
     self.len = k - 1;
+    self.ptr = p;
 
     Some((x, v))
   }
@@ -961,11 +971,11 @@ impl<'a, A> Iterator for IterMut<'a, A> {
       x = unsafe { &*p }.hash;
     }
 
-    let x = self.mixer.hash(unsafe { NonZeroU64::new_unchecked(x) });
+    let x = self.rev.hash(unsafe { NonZeroU64::new_unchecked(x) });
     let v = unsafe { (&mut *p).value.assume_init_mut() };
 
-    self.ptr = p;
     self.len = k - 1;
+    self.ptr = p;
 
     Some((x, v))
   }
@@ -993,10 +1003,10 @@ impl<'a, A> Iterator for Keys<'a, A> {
       x = unsafe { &*p }.hash;
     }
 
-    let x = self.mixer.hash(unsafe { NonZeroU64::new_unchecked(x) });
+    let x = self.rev.hash(unsafe { NonZeroU64::new_unchecked(x) });
 
-    self.ptr = p;
     self.len = k - 1;
+    self.ptr = p;
 
     Some(x)
   }
@@ -1026,8 +1036,8 @@ impl<'a, A> Iterator for Values<'a, A> {
 
     let v = unsafe { (&*p).value.assume_init_ref() };
 
-    self.ptr = p;
     self.len = k - 1;
+    self.ptr = p;
 
     Some(v)
   }
@@ -1057,8 +1067,8 @@ impl<'a, A> Iterator for ValuesMut<'a, A> {
 
     let v = unsafe { (&mut *p).value.assume_init_mut() };
 
-    self.ptr = p;
     self.len = k - 1;
+    self.ptr = p;
 
     Some(v)
   }
@@ -1086,11 +1096,11 @@ impl<A> Iterator for IntoIter<A> {
       x = unsafe { &*p }.hash;
     }
 
-    let x = self.mixer.hash(unsafe { NonZeroU64::new_unchecked(x) });
+    let x = self.rev.hash(unsafe { NonZeroU64::new_unchecked(x) });
     let v = unsafe { (&*p).value.assume_init_read() };
 
-    self.ptr = p;
     self.len = k - 1;
+    self.ptr = p;
 
     Some((x, v))
   }
@@ -1104,13 +1114,15 @@ impl<A> Iterator for IntoIter<A> {
 impl<A> Drop for IntoIter<A> {
   #[inline]
   fn drop(&mut self) {
-    for _ in &mut *self {} // drops values
+    for (_, v) in &mut *self { drop::<A>(v) }
 
-    let size = self.to_dealloc.1;
-    let align = mem::align_of::<Slot<A>>();
-    let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
+    if ! self.mem.0.is_null() {
+      let size = self.mem.1;
+      let align = mem::align_of::<Slot<A>>();
+      let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
-    unsafe { std::alloc::dealloc(self.to_dealloc.0, layout) };
+      unsafe { std::alloc::dealloc(self.mem.0, layout) };
+    }
   }
 }
 
@@ -1148,20 +1160,22 @@ impl<A> Iterator for IntoValues<A> {
 impl<A> Drop for IntoValues<A> {
   #[inline]
   fn drop(&mut self) {
-    for _ in &mut *self {} // drops values
+    for v in &mut *self { drop::<A>(v) }
 
-    let size = self.to_dealloc.1;
-    let align = mem::align_of::<Slot<A>>();
-    let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
+    if ! self.mem.0.is_null() {
+      let size = self.mem.1;
+      let align = mem::align_of::<Slot<A>>();
+      let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
-    unsafe { std::alloc::dealloc(self.to_dealloc.0, layout) };
+      unsafe { std::alloc::dealloc(self.mem.0, layout) };
+    }
   }
 }
 
 pub mod internal {
   //! Unstable API exposing implementation details for tests and benchmarks.
 
-  use crate::prelude::*;
+  use super::*;
 
   #[inline]
   pub fn num_slots<A>(t: &HashMapNZ64<A>) -> usize {
