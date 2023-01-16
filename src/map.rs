@@ -144,7 +144,7 @@ const INITIAL_R: isize = INITIAL_C;
 
 #[inline(always)]
 const unsafe fn spot(shift: usize, h: u64) -> isize {
-  if ! (shift <= 63) { unsafe { unreachable_unchecked() }; }
+  unsafe { assume(shift <= 64) };
   (h >> shift) as isize 
 }
 
@@ -328,7 +328,7 @@ impl<A> HashMapNZ64<A> {
     unsafe { &mut *p }.hash = h;
     unsafe { &mut *p }.value = MaybeUninit::new(value);
 
-    // We only modify `self` after we know that allocation hasn't failed.
+    // We only modify `self` after we know that allocation has succeeded.
 
     self.table = t;
     self.shift = INITIAL_S;
@@ -469,6 +469,7 @@ impl<A> HashMapNZ64<A> {
 
     if x == h {
       let v = mem::replace(unsafe { (&mut *p).value.assume_init_mut() }, value);
+
       return Some(v);
     }
 
@@ -522,7 +523,7 @@ impl<A> HashMapNZ64<A> {
       let q = unsafe { p.add(1) };
       let x = unsafe { &*q }.hash;
 
-      if p < unsafe { t.offset(- spot(s, x)) } || /* unlikely */ x == 0 { break; }
+      if p < unsafe { t.offset(- spot(s, x)) } || expect(x == 0, false) { break; }
 
       unsafe { &mut *p }.hash = x;
       unsafe { &mut *p }.value = MaybeUninit::new(unsafe { (&*q).value.assume_init_read() });
@@ -573,6 +574,8 @@ impl<A> HashMapNZ64<A> {
     let r = self.space;
     let b = self.check as *mut Slot<A>;
     let c = 1 << (64 - s - 1);
+    let d = 1 << (64 - s);
+    let a = unsafe { t.sub(d - 1) };
     let k = (c - r) as usize;
 
     if k == 0 { return; }
@@ -605,10 +608,12 @@ impl<A> HashMapNZ64<A> {
         }
       }
     } else {
-      let d = 1 << (64 - s);
-      let a = unsafe { t.sub(d - 1) };
+      let mut p = a;
 
-      each_mut(a, b, |p| { unsafe { &mut *p }.hash = 0; });
+      while p <= b {
+        unsafe { &mut *p }.hash = 0;
+        p = unsafe { p.add(1) };
+      }
 
       self.space = c;
     }
@@ -623,7 +628,7 @@ impl<A> HashMapNZ64<A> {
     if t.is_null() { return; }
 
     let s = self.shift;
-    let b = self.check;
+    let b = self.check as *mut Slot<A>;
     let d = 1 << (64 - s);
     let e = unsafe { b.offset_from(t) } as usize;
     let n = d + e;
@@ -643,11 +648,14 @@ impl<A> HashMapNZ64<A> {
       // Here, we have already put `self` into the valid initial state, so if a
       // call to `drop` panics then we can just safely leak the table.
 
-      each_mut(a, b, |p| {
+      let mut p = a;
+
+      while p <= b {
         if unsafe { &mut *p }.hash != 0 {
           unsafe { (&mut *p).value.assume_init_drop() };
         }
-      })
+        p = unsafe { p.add(1) };
+      }
     }
 
     let align = mem::align_of::<Slot<A>>();
