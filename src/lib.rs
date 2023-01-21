@@ -55,3 +55,11 @@ pub fn nz_remove(t: &mut HashMapNZ64<u64>, x: NonZeroU64) -> Option<u64> {
 pub fn nz_iter(t: &HashMapNZ64<u64>) -> map::Iter<'_, u64> {
   t.iter()
 }
+
+pub fn nz_clear(t: &mut HashMapNZ64<u64>) {
+  t.clear()
+}
+
+pub fn nz_reset(t: &mut HashMapNZ64<u64>) {
+  t.reset()
+}

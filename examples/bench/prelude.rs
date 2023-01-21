@@ -5,6 +5,7 @@ pub use core::num::NonZeroU64;
 pub use fxhash::FxHashMap;
 pub use intmap::IntMap;
 pub use std::collections::HashMap;
+pub use std::collections::BTreeMap;
 pub use std::time::Instant;
 pub use wordmap::map::HashMapNZ64;
 pub use wordmap::rng::Rng;

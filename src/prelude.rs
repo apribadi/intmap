@@ -3,7 +3,7 @@ pub use core::array;
 pub use core::cell::Cell;
 pub use core::cmp::max;
 pub use core::fmt;
-pub use core::hint::unreachable_unchecked;
+pub use core::hint;
 pub use core::iter::FusedIterator;
 pub use core::marker::PhantomData;
 pub use core::mem::ManuallyDrop;
@@ -21,16 +21,16 @@ pub use crate::rng::Rng;
 pub use crate::rng;
 
 #[inline(always)]
-pub fn each_mut<A, F>(mut p: *mut A, q: *const A, mut f: F) where F: FnMut(*mut A) {
-  loop { f(p); if ptr::eq(p, q) { break; } p = p.wrapping_add(1); }
+pub const unsafe fn assume(p: bool) {
+  if ! p { unsafe { hint::unreachable_unchecked() } }
 }
 
 #[inline(always)]
 #[cold]
-pub fn cold() {}
+pub const fn cold() {}
 
 #[inline(always)]
-pub fn expect(p: bool, q: bool) -> bool {
+pub const fn expect(p: bool, q: bool) -> bool {
   if p != q { cold() }
   p
 }

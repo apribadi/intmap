@@ -3,28 +3,30 @@ mod maps;
 
 use crate::prelude::*;
 
-const NUM_OPERATIONS: usize = 100_000;
-const KEY_ROTATE_LEFT: u32 = 1;
-// const KEY_ROTATE_LEFT: u32 = 16;
+const NUM_OPERATIONS: usize = 20_000_000;
+const KEY_ROTATE_LEFT: u32 = 16;
 
-const SIZES: &[usize] = &[
-  10,
-  20,
-  50,
-  100,
-  200,
-  500,
-  1_000,
-  2_000,
-  5_000,
-  10_000,
-  20_000,
-  50_000,
-  100_000,
-  200_000,
-  500_000,
-  1_000_000,
-];
+fn sizes() -> Box<[usize]> {
+  [ 
+    1,
+    10,
+    100,
+    1000,
+    10000,
+    100000,
+  ].iter().flat_map(|a|
+    [
+      10,
+      13,
+      18,
+      25,
+      30,
+      40,
+      55,
+      75,
+    ].map(|b| a * b)
+  ).collect::<Vec<_>>().into_boxed_slice()
+}
 
 #[inline]
 fn key_seq(i: usize) -> NonZeroU64 {
@@ -156,20 +158,27 @@ fn bench_remove_insert<T: BenchMap>(size: usize) -> f64 {
 
 fn main() {
   fn go<T: BenchMap>(name: &'static str) {
-    for &size in SIZES {
+    for &size in sizes().iter() {
       let _ = bench_get_50pct::<T>;
       let _ = bench_get_100pct::<T>;
       let _ = bench_remove_insert::<T>;
       let _ = bench_memory::<T>;
       let nanos = bench_get_100pct::<T>(size);
-      println!("{:11} {:9} -> {:4.0} ns/op", name, size, nanos);
+      println!("{:11} {:9} -> {:4.1} ns/op", name, size, nanos);
+      /*
+      let nanos = bench_get_50pct::<T>(size);
+      println!("{:11} {:9} -> {:4.1} ns/op", name, size, nanos);
+      let nanos = bench_remove_insert::<T>(size);
+      println!("{:11} {:9} -> {:4.1} ns/op", name, size, nanos);
+      */
     }
   }
-  go::<HashMap<NonZeroU64, u64>>("HashMap");
+  // go::<HashMap<NonZeroU64, u64>>("HashMap");
   go::<AHashMap<NonZeroU64, u64>>("AHashMap");
   go::<HashMapNZ64<u64>>("HashMapNZ64");
-  go::<FxHashMap<NonZeroU64, u64>>("FxHashMap");
-  go::<IntMap<u64>>("IntMap");
+  // go::<FxHashMap<NonZeroU64, u64>>("FxHashMap");
+  // go::<IntMap<u64>>("IntMap");
+  go::<BTreeMap<NonZeroU64, u64>>("BTreeMap");
   // go::<FakeMap>("FakeMap");
   //
   /*

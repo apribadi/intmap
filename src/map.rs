@@ -17,33 +17,33 @@ use crate::prelude::*;
 /// The [module documentation](self) discusses design tradeoffs of this data
 /// structure.
 
-pub struct HashMapNZ64<A> {
+pub struct HashMapNZ64<T> {
   mixer: Mixer,
-  table: *const Slot<A>, // covariant in `A`
+  table: *const Slot<T>, // covariant in `A`
   shift: usize,
   space: isize,
-  check: *const Slot<A>,
+  check: *const Slot<T>,
 }
 
-unsafe impl<A: Send> Send for HashMapNZ64<A> {}
+unsafe impl<T: Send> Send for HashMapNZ64<T> {}
 
-unsafe impl<A: Sync> Sync for HashMapNZ64<A> {}
+unsafe impl<T: Sync> Sync for HashMapNZ64<T> {}
 
 #[derive(Clone, Copy)]
 struct Mixer(u64, u64);
 
-struct Slot<A> {
+struct Slot<T> {
   hash: u64,
-  value: MaybeUninit<A>,
+  value: MaybeUninit<T>,
 }
 
 pub struct OccupiedEntry<'a, A: 'a> {
-  map: &'a mut HashMapNZ64<A>,
-  ptr: *mut Slot<A>,
+  map: &'a mut HashMapNZ64<T>,
+  ptr: *mut Slot<T>,
 }
 
 pub struct VacantEntry<'a, A: 'a> {
-  map: &'a mut HashMapNZ64<A>,
+  map: &'a mut HashMapNZ64<T>,
   key: NonZeroU64,
 }
 
@@ -57,7 +57,7 @@ pub enum Entry<'a, A: 'a> {
 #[derive(Clone)]
 pub struct Iter<'a, A: 'a> {
   len: usize,
-  ptr: *const Slot<A>,
+  ptr: *const Slot<T>,
   rev: Mixer,
   var: PhantomData<&'a A>,
 }
@@ -66,7 +66,7 @@ pub struct Iter<'a, A: 'a> {
 
 pub struct IterMut<'a, A: 'a> {
   len: usize,
-  ptr: *mut Slot<A>,
+  ptr: *mut Slot<T>,
   rev: Mixer,
   var: PhantomData<&'a mut A>,
 }
@@ -76,7 +76,7 @@ pub struct IterMut<'a, A: 'a> {
 #[derive(Clone)]
 pub struct Keys<'a, A: 'a> {
   len: usize,
-  ptr: *const Slot<A>,
+  ptr: *const Slot<T>,
   rev: Mixer,
   var: PhantomData<&'a A>,
 }
@@ -86,7 +86,7 @@ pub struct Keys<'a, A: 'a> {
 #[derive(Clone)]
 pub struct Values<'a, A: 'a> {
   len: usize,
-  ptr: *const Slot<A>,
+  ptr: *const Slot<T>,
   var: PhantomData<&'a A>,
 }
 
@@ -94,24 +94,24 @@ pub struct Values<'a, A: 'a> {
 
 pub struct ValuesMut<'a, A: 'a> {
   len: usize,
-  ptr: *mut Slot<A>,
+  ptr: *mut Slot<T>,
   var: PhantomData<&'a mut A>,
 }
 
 /// Iterator returned by [`HashMapNZ64::into_iter`].
 
-pub struct IntoIter<A> {
+pub struct IntoIter<T> {
   rev: Mixer,
   len: usize,
-  ptr: *const Slot<A>, // covariant in `A`
+  ptr: *const Slot<T>, // covariant in `A`
   mem: (*mut u8, usize),
 }
 
 /// Iterator returned by [`HashMapNZ64::into_values`].
 
-pub struct IntoValues<A> {
+pub struct IntoValues<T> {
   len: usize,
-  ptr: *const Slot<A>, // covariant in `A`
+  ptr: *const Slot<T>, // covariant in `A`
   mem: (*mut u8, usize),
 }
 
@@ -184,7 +184,7 @@ impl Mixer {
   }
 }
 
-impl<A> HashMapNZ64<A> {
+impl<T> HashMapNZ64<T> {
   /// Creates an empty map, seeding the hash mixer from a thread-local random
   /// number generator.
 
@@ -285,7 +285,7 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   pub fn get_mut(&mut self, key: NonZeroU64) -> Option<&mut A> {
-    let t = self.table as *mut Slot<A>;
+    let t = self.table as *mut Slot<T>;
 
     if t.is_null() { return None; }
 
@@ -309,13 +309,13 @@ impl<A> HashMapNZ64<A> {
   #[inline(never)]
   #[cold]
   unsafe fn internal_init_table_and_insert(&mut self, key: NonZeroU64, value: A) {
-    assert!(INITIAL_N <= isize::MAX as usize / mem::size_of::<Slot<A>>());
+    assert!(INITIAL_N <= isize::MAX as usize / mem::size_of::<Slot<T>>());
 
-    let align = mem::align_of::<Slot<A>>();
-    let size = INITIAL_N * mem::size_of::<Slot<A>>();
+    let align = mem::align_of::<Slot<T>>();
+    let size = INITIAL_N * mem::size_of::<Slot<T>>();
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
-    let a = unsafe { std::alloc::alloc_zeroed(layout) } as *mut Slot<A>;
+    let a = unsafe { std::alloc::alloc_zeroed(layout) } as *mut Slot<T>;
     if a.is_null() { match std::alloc::handle_alloc_error(layout) {} }
 
     let t = unsafe { a.add(INITIAL_D - 1) };
@@ -339,10 +339,10 @@ impl<A> HashMapNZ64<A> {
   #[inline(never)]
   #[cold]
   unsafe fn internal_grow_table(&mut self) {
-    let old_t = self.table as *mut Slot<A>;
+    let old_t = self.table as *mut Slot<T>;
     let old_s = self.shift;
     let old_r = self.space;
-    let old_b = self.check as *mut Slot<A>;
+    let old_b = self.check as *mut Slot<T>;
 
     let old_b_hash = unsafe { &*old_b }.hash;
     let is_overfull = old_r < 0;
@@ -388,15 +388,15 @@ impl<A> HashMapNZ64<A> {
     let new_n = new_d + new_e;
     let new_r = old_r + (new_c - old_c);
 
-    assert!(new_n <= isize::MAX as usize / mem::size_of::<Slot<A>>());
+    assert!(new_n <= isize::MAX as usize / mem::size_of::<Slot<T>>());
 
-    let align = mem::align_of::<Slot<A>>();
-    let old_size = old_n * mem::size_of::<Slot<A>>();
-    let new_size = new_n * mem::size_of::<Slot<A>>();
+    let align = mem::align_of::<Slot<T>>();
+    let old_size = old_n * mem::size_of::<Slot<T>>();
+    let new_size = new_n * mem::size_of::<Slot<T>>();
     let old_layout = unsafe { Layout::from_size_align_unchecked(old_size, align) };
     let new_layout = unsafe { Layout::from_size_align_unchecked(new_size, align) };
 
-    let new_a = unsafe { std::alloc::alloc_zeroed(new_layout) } as *mut Slot<A>;
+    let new_a = unsafe { std::alloc::alloc_zeroed(new_layout) } as *mut Slot<T>;
     if new_a.is_null() { match std::alloc::handle_alloc_error(new_layout) {} }
 
     // At this point, we know that allocating a new table has succeeded, so we
@@ -446,8 +446,8 @@ impl<A> HashMapNZ64<A> {
   /// state.
 
   #[inline]
-  pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<A> {
-    let t = self.table as *mut Slot<A>;
+  pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<T> {
+    let t = self.table as *mut Slot<T>;
 
     if t.is_null() {
       unsafe { self.internal_init_table_and_insert(key, value) };
@@ -487,7 +487,7 @@ impl<A> HashMapNZ64<A> {
 
     let r = self.space - 1;
     self.space = r;
-    let b = self.check as *mut Slot<A>;
+    let b = self.check as *mut Slot<T>;
 
     if r < 0 || p == b { unsafe { self.internal_grow_table() }; }
 
@@ -498,8 +498,8 @@ impl<A> HashMapNZ64<A> {
   /// with the given key, if one was present.
 
   #[inline]
-  pub fn remove(&mut self, key: NonZeroU64) -> Option<A> {
-    let t = self.table as *mut Slot<A>;
+  pub fn remove(&mut self, key: NonZeroU64) -> Option<T> {
+    let t = self.table as *mut Slot<T>;
 
     if t.is_null() { return None; }
 
@@ -539,7 +539,7 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   pub fn entry(&mut self, key: NonZeroU64) -> Entry<'_, A> {
-    let t = self.table as *mut Slot<A>;
+    let t = self.table as *mut Slot<T>;
 
     if t.is_null() { return Entry::Vacant(VacantEntry { map: self, key }); }
 
@@ -566,13 +566,13 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   pub fn clear(&mut self) {
-    let t = self.table as *mut Slot<A>;
+    let t = self.table as *mut Slot<T>;
 
     if t.is_null() { return; }
 
     let s = self.shift;
     let r = self.space;
-    let b = self.check as *mut Slot<A>;
+    let b = self.check as *mut Slot<T>;
     let c = 1 << (64 - s - 1);
     let d = 1 << (64 - s);
     let a = unsafe { t.sub(d - 1) };
@@ -580,7 +580,7 @@ impl<A> HashMapNZ64<A> {
 
     if k == 0 { return; }
 
-    if mem::needs_drop::<A>() {
+    if mem::needs_drop::<T>() {
       // WARNING!
       //
       // We must be careful to leave the map in a valid state even if a call to
@@ -623,12 +623,12 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   pub fn reset(&mut self) {
-    let t = self.table as *mut Slot<A>;
+    let t = self.table as *mut Slot<T>;
 
     if t.is_null() { return; }
 
     let s = self.shift;
-    let b = self.check as *mut Slot<A>;
+    let b = self.check as *mut Slot<T>;
     let d = 1 << (64 - s);
     let e = unsafe { b.offset_from(t) } as usize;
     let n = d + e;
@@ -639,7 +639,7 @@ impl<A> HashMapNZ64<A> {
     self.space = INITIAL_R;
     self.check = ptr::null();
 
-    if mem::needs_drop::<A>() {
+    if mem::needs_drop::<T>() {
       // WARNING!
       //
       // We must be careful to leave the map in a valid state even if a call to
@@ -658,8 +658,8 @@ impl<A> HashMapNZ64<A> {
       }
     }
 
-    let align = mem::align_of::<Slot<A>>();
-    let size = n * mem::size_of::<Slot<A>>();
+    let align = mem::align_of::<Slot<T>>();
+    let size = n * mem::size_of::<Slot<T>>();
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
     unsafe { std::alloc::dealloc(a as *mut u8, layout) };
@@ -688,7 +688,7 @@ impl<A> HashMapNZ64<A> {
     let m = self.mixer;
     let s = self.shift;
     let r = self.space;
-    let b = self.check as *mut Slot<A>;
+    let b = self.check as *mut Slot<T>;
     let c = 1 << (64 - s - 1);
     let k = (c - r) as usize;
 
@@ -731,7 +731,7 @@ impl<A> HashMapNZ64<A> {
   pub fn values_mut(&mut self) -> ValuesMut<'_, A> {
     let s = self.shift;
     let r = self.space;
-    let b = self.check as *mut Slot<A>;
+    let b = self.check as *mut Slot<T>;
     let c = 1 << (64 - s - 1);
     let k = (c - r) as usize;
 
@@ -742,7 +742,7 @@ impl<A> HashMapNZ64<A> {
   /// iterator item type is `A`.
 
   #[inline]
-  pub fn into_values(self) -> IntoValues<A> {
+  pub fn into_values(self) -> IntoValues<T> {
     let o = ManuallyDrop::new(self);
     let t = o.table;
 
@@ -758,7 +758,7 @@ impl<A> HashMapNZ64<A> {
     let k = (c - r) as usize;
     let a = unsafe { t.sub(d - 1) } as *mut u8;
 
-    IntoValues { len: k, ptr: b, mem: (a, n * mem::size_of::<Slot<A>>()) }
+    IntoValues { len: k, ptr: b, mem: (a, n * mem::size_of::<Slot<T>>()) }
   }
 
   #[inline]
@@ -777,7 +777,7 @@ impl<A> HashMapNZ64<A> {
 
   #[inline]
   fn internal_num_bytes(&self) -> usize {
-    self.internal_num_slots() * mem::size_of::<Slot<A>>()
+    self.internal_num_slots() * mem::size_of::<Slot<T>>()
   }
 
   #[inline]
@@ -803,22 +803,22 @@ impl<A> HashMapNZ64<A> {
     let n = d + e;
     let a = unsafe { t.sub(d - 1) };
 
-    let align = mem::align_of::<Slot<A>>();
-    let size = n * mem::size_of::<Slot<A>>();
+    let align = mem::align_of::<Slot<T>>();
+    let size = n * mem::size_of::<Slot<T>>();
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
     Some((unsafe { NonNull::new_unchecked(a as *mut u8) }, layout))
   }
 }
 
-impl<A> Drop for HashMapNZ64<A> {
+impl<T> Drop for HashMapNZ64<T> {
   #[inline]
   fn drop(&mut self) {
     self.reset()
   }
 }
 
-impl<A> Index<NonZeroU64> for HashMapNZ64<A> {
+impl<T> Index<NonZeroU64> for HashMapNZ64<T> {
   type Output = A;
 
   #[inline]
@@ -827,20 +827,20 @@ impl<A> Index<NonZeroU64> for HashMapNZ64<A> {
   }
 }
 
-impl<A> IndexMut<NonZeroU64> for HashMapNZ64<A> {
+impl<T> IndexMut<NonZeroU64> for HashMapNZ64<T> {
   #[inline]
   fn index_mut(&mut self, key: NonZeroU64) -> &mut A {
     self.get_mut(key).unwrap()
   }
 }
 
-impl<A> IntoIterator for HashMapNZ64<A> {
+impl<T> IntoIterator for HashMapNZ64<T> {
   type Item = (NonZeroU64, A);
 
-  type IntoIter = IntoIter<A>;
+  type IntoIter = IntoIter<T>;
 
   #[inline]
-  fn into_iter(self) -> IntoIter<A> {
+  fn into_iter(self) -> IntoIter<T> {
     let o = ManuallyDrop::new(self);
     let m = o.mixer;
     let t = o.table;
@@ -857,11 +857,11 @@ impl<A> IntoIterator for HashMapNZ64<A> {
     let k = (c - r) as usize;
     let a = unsafe { t.sub(d - 1) } as *mut u8;
 
-    IntoIter { rev: m, len: k, ptr: b, mem: (a, n * mem::size_of::<Slot<A>>()) }
+    IntoIter { rev: m, len: k, ptr: b, mem: (a, n * mem::size_of::<Slot<T>>()) }
   }
 }
 
-impl<A: fmt::Debug> fmt::Debug for HashMapNZ64<A> {
+impl<T: fmt::Debug> fmt::Debug for HashMapNZ64<T> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
     let mut items = self.iter().collect::<Vec<(NonZeroU64, &A)>>();
 
@@ -897,7 +897,7 @@ impl<'a, A> OccupiedEntry<'a, A> {
   pub fn remove(self) -> A {
     let mut p = self.ptr;
     let o = self.map;
-    let t = o.table as *mut Slot<A>;
+    let t = o.table as *mut Slot<T>;
     let s = o.shift;
 
     let v = unsafe { (&mut *p).value.assume_init_read() };
@@ -1087,7 +1087,7 @@ impl<'a, A> Iterator for ValuesMut<'a, A> {
   }
 }
 
-impl<A> Iterator for IntoIter<A> {
+impl<T> Iterator for IntoIter<T> {
   type Item = (NonZeroU64, A);
 
   #[inline]
@@ -1119,14 +1119,14 @@ impl<A> Iterator for IntoIter<A> {
   }
 }
 
-impl<A> Drop for IntoIter<A> {
+impl<T> Drop for IntoIter<T> {
   #[inline]
   fn drop(&mut self) {
-    for (_, v) in &mut *self { drop::<A>(v) }
+    for (_, v) in &mut *self { drop::<T>(v) }
 
     if ! self.mem.0.is_null() {
       let size = self.mem.1;
-      let align = mem::align_of::<Slot<A>>();
+      let align = mem::align_of::<Slot<T>>();
       let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
       unsafe { std::alloc::dealloc(self.mem.0, layout) };
@@ -1134,7 +1134,7 @@ impl<A> Drop for IntoIter<A> {
   }
 }
 
-impl<A> Iterator for IntoValues<A> {
+impl<T> Iterator for IntoValues<T> {
   type Item = A;
 
   #[inline]
@@ -1165,14 +1165,14 @@ impl<A> Iterator for IntoValues<A> {
   }
 }
 
-impl<A> Drop for IntoValues<A> {
+impl<T> Drop for IntoValues<T> {
   #[inline]
   fn drop(&mut self) {
-    for v in &mut *self { drop::<A>(v) }
+    for v in &mut *self { drop::<T>(v) }
 
     if ! self.mem.0.is_null() {
       let size = self.mem.1;
-      let align = mem::align_of::<Slot<A>>();
+      let align = mem::align_of::<Slot<T>>();
       let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
       unsafe { std::alloc::dealloc(self.mem.0, layout) };
@@ -1186,22 +1186,22 @@ pub mod internal {
   use super::*;
 
   #[inline]
-  pub fn num_slots<A>(t: &HashMapNZ64<A>) -> usize {
+  pub fn num_slots<T>(t: &HashMapNZ64<T>) -> usize {
     t.internal_num_slots()
   }
 
   #[inline]
-  pub fn num_bytes<A>(t: &HashMapNZ64<A>) -> usize {
+  pub fn num_bytes<T>(t: &HashMapNZ64<T>) -> usize {
     t.internal_num_bytes()
   }
 
   #[inline]
-  pub fn load<A>(t: &HashMapNZ64<A>) -> f64 {
+  pub fn load<T>(t: &HashMapNZ64<T>) -> f64 {
     t.internal_load()
   }
 
   #[inline]
-  pub fn allocation_info<A>(t: &HashMapNZ64<A>) -> Option<(NonNull<u8>, Layout)> {
+  pub fn allocation_info<T>(t: &HashMapNZ64<T>) -> Option<(NonNull<u8>, Layout)> {
     t.internal_allocation_info()
   }
 }

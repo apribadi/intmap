@@ -85,6 +85,20 @@ impl BenchMap for IntMap<u64> {
   fn remove(&mut self, key: NonZeroU64) -> Option<u64> { self.remove(key.get()) }
 }
 
+impl BenchMap for BTreeMap<NonZeroU64, u64> {
+  #[inline]
+  fn new() -> Self { BTreeMap::new() }
+
+  #[inline]
+  fn get(&self, key: NonZeroU64) -> Option<u64> { self.get(&key).map(|x| *x) }
+
+  #[inline]
+  fn insert(&mut self, key: NonZeroU64, value: u64) -> Option<u64> { self.insert(key, value) }
+
+  #[inline]
+  fn remove(&mut self, key: NonZeroU64) -> Option<u64> { self.remove(&key) }
+}
+
 pub struct FakeMap(u64);
 
 impl BenchMap for FakeMap {
