@@ -19,7 +19,7 @@ use crate::prelude::*;
 
 pub struct HashMapNZ64<T> {
   mixer: Mixer,
-  table: *const Slot<T>, // covariant in `A`
+  table: *const Slot<T>, // covariant in `T`
   shift: usize,
   space: isize,
   check: *const Slot<T>,
@@ -37,65 +37,65 @@ struct Slot<T> {
   value: MaybeUninit<T>,
 }
 
-pub struct OccupiedEntry<'a, A: 'a> {
+pub struct OccupiedEntry<'a, T: 'a> {
   map: &'a mut HashMapNZ64<T>,
   ptr: *mut Slot<T>,
 }
 
-pub struct VacantEntry<'a, A: 'a> {
+pub struct VacantEntry<'a, T: 'a> {
   map: &'a mut HashMapNZ64<T>,
   key: NonZeroU64,
 }
 
-pub enum Entry<'a, A: 'a> {
-  Occupied(OccupiedEntry<'a, A>),
-  Vacant(VacantEntry<'a, A>),
+pub enum Entry<'a, T: 'a> {
+  Occupied(OccupiedEntry<'a, T>),
+  Vacant(VacantEntry<'a, T>),
 }
 
 /// Iterator returned by [`HashMapNZ64::iter`].
 
 #[derive(Clone)]
-pub struct Iter<'a, A: 'a> {
+pub struct Iter<'a, T: 'a> {
   len: usize,
   ptr: *const Slot<T>,
   rev: Mixer,
-  var: PhantomData<&'a A>,
+  var: PhantomData<&'a T>,
 }
 
 /// Iterator returned by [`HashMapNZ64::iter_mut`].
 
-pub struct IterMut<'a, A: 'a> {
+pub struct IterMut<'a, T: 'a> {
   len: usize,
   ptr: *mut Slot<T>,
   rev: Mixer,
-  var: PhantomData<&'a mut A>,
+  var: PhantomData<&'a mut T>,
 }
 
 /// Iterator returned by [`HashMapNZ64::keys`].
 
 #[derive(Clone)]
-pub struct Keys<'a, A: 'a> {
+pub struct Keys<'a, T: 'a> {
   len: usize,
   ptr: *const Slot<T>,
   rev: Mixer,
-  var: PhantomData<&'a A>,
+  var: PhantomData<&'a T>,
 }
 
 /// Iterator returned by [`HashMapNZ64::values`].
 
 #[derive(Clone)]
-pub struct Values<'a, A: 'a> {
+pub struct Values<'a, T: 'a> {
   len: usize,
   ptr: *const Slot<T>,
-  var: PhantomData<&'a A>,
+  var: PhantomData<&'a T>,
 }
 
 /// Iterator returned by [`HashMapNZ64::values_mut`].
 
-pub struct ValuesMut<'a, A: 'a> {
+pub struct ValuesMut<'a, T: 'a> {
   len: usize,
   ptr: *mut Slot<T>,
-  var: PhantomData<&'a mut A>,
+  var: PhantomData<&'a mut T>,
 }
 
 /// Iterator returned by [`HashMapNZ64::into_iter`].
@@ -103,7 +103,7 @@ pub struct ValuesMut<'a, A: 'a> {
 pub struct IntoIter<T> {
   rev: Mixer,
   len: usize,
-  ptr: *const Slot<T>, // covariant in `A`
+  ptr: *const Slot<T>, // covariant in `T`
   mem: (*mut u8, usize),
 }
 
@@ -111,29 +111,29 @@ pub struct IntoIter<T> {
 
 pub struct IntoValues<T> {
   len: usize,
-  ptr: *const Slot<T>, // covariant in `A`
+  ptr: *const Slot<T>, // covariant in `T`
   mem: (*mut u8, usize),
 }
 
-impl<'a, A> FusedIterator for Iter<'a, A> {}
+impl<'a, T> FusedIterator for Iter<'a, T> {}
 
-impl<'a, A> FusedIterator for IterMut<'a, A> {}
+impl<'a, T> FusedIterator for IterMut<'a, T> {}
 
-impl<'a, A> FusedIterator for Keys<'a, A> {}
+impl<'a, T> FusedIterator for Keys<'a, T> {}
 
-impl<'a, A> FusedIterator for Values<'a, A> {}
+impl<'a, T> FusedIterator for Values<'a, T> {}
 
-impl<'a, A> FusedIterator for ValuesMut<'a, A> {}
+impl<'a, T> FusedIterator for ValuesMut<'a, T> {}
 
-impl<'a, A> ExactSizeIterator for Iter<'a, A> {}
+impl<'a, T> ExactSizeIterator for Iter<'a, T> {}
 
-impl<'a, A> ExactSizeIterator for IterMut<'a, A> {}
+impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
 
-impl<'a, A> ExactSizeIterator for Keys<'a, A> {}
+impl<'a, T> ExactSizeIterator for Keys<'a, T> {}
 
-impl<'a, A> ExactSizeIterator for Values<'a, A> {}
+impl<'a, T> ExactSizeIterator for Values<'a, T> {}
 
-impl<'a, A> ExactSizeIterator for ValuesMut<'a, A> {}
+impl<'a, T> ExactSizeIterator for ValuesMut<'a, T> {}
 
 const INITIAL_S: usize = 60;
 const INITIAL_C: isize = 1 << (64 - INITIAL_S - 1);
@@ -145,7 +145,7 @@ const INITIAL_R: isize = INITIAL_C;
 #[inline(always)]
 const unsafe fn spot(shift: usize, h: u64) -> isize {
   unsafe { assume(shift <= 64) };
-  (h >> shift) as isize 
+  (h >> shift) as isize
 }
 
 #[inline(always)]
@@ -258,7 +258,7 @@ impl<T> HashMapNZ64<T> {
   /// present.
 
   #[inline]
-  pub fn get(&self, key: NonZeroU64) -> Option<&A> {
+  pub fn get(&self, key: NonZeroU64) -> Option<&T> {
     let t = self.table;
 
     if t.is_null() { return None; }
@@ -284,7 +284,7 @@ impl<T> HashMapNZ64<T> {
   /// if present.
 
   #[inline]
-  pub fn get_mut(&mut self, key: NonZeroU64) -> Option<&mut A> {
+  pub fn get_mut(&mut self, key: NonZeroU64) -> Option<&mut T> {
     let t = self.table as *mut Slot<T>;
 
     if t.is_null() { return None; }
@@ -308,7 +308,7 @@ impl<T> HashMapNZ64<T> {
 
   #[inline(never)]
   #[cold]
-  unsafe fn internal_init_table_and_insert(&mut self, key: NonZeroU64, value: A) {
+  unsafe fn internal_init_table_and_insert(&mut self, key: NonZeroU64, value: T) {
     assert!(INITIAL_N <= isize::MAX as usize / mem::size_of::<Slot<T>>());
 
     let align = mem::align_of::<Slot<T>>();
@@ -446,7 +446,7 @@ impl<T> HashMapNZ64<T> {
   /// state.
 
   #[inline]
-  pub fn insert(&mut self, key: NonZeroU64, value: A) -> Option<T> {
+  pub fn insert(&mut self, key: NonZeroU64, value: T) -> Option<T> {
     let t = self.table as *mut Slot<T>;
 
     if t.is_null() {
@@ -538,7 +538,7 @@ impl<T> HashMapNZ64<T> {
   }
 
   #[inline]
-  pub fn entry(&mut self, key: NonZeroU64) -> Entry<'_, A> {
+  pub fn entry(&mut self, key: NonZeroU64) -> Entry<'_, T> {
     let t = self.table as *mut Slot<T>;
 
     if t.is_null() { return Entry::Vacant(VacantEntry { map: self, key }); }
@@ -666,10 +666,10 @@ impl<T> HashMapNZ64<T> {
   }
 
   /// Returns an iterator yielding each key and a reference to its associated
-  /// value. The iterator item type is `(NonZeroU64, &'_ A)`.
+  /// value. The iterator item type is `(NonZeroU64, &'_ T)`.
 
   #[inline]
-  pub fn iter(&self) -> Iter<'_, A> {
+  pub fn iter(&self) -> Iter<'_, T> {
     let m = self.mixer;
     let s = self.shift;
     let r = self.space;
@@ -681,10 +681,10 @@ impl<T> HashMapNZ64<T> {
   }
 
   /// Returns an iterator yielding each key and a mutable reference to its
-  /// associated value. The iterator item type is `(NonZeroU64, &'_ mut A)`.
+  /// associated value. The iterator item type is `(NonZeroU64, &'_ mut T)`.
 
   #[inline]
-  pub fn iter_mut(&mut self) -> IterMut<'_, A> {
+  pub fn iter_mut(&mut self) -> IterMut<'_, T> {
     let m = self.mixer;
     let s = self.shift;
     let r = self.space;
@@ -699,7 +699,7 @@ impl<T> HashMapNZ64<T> {
   /// `NonZeroU64`.
 
   #[inline]
-  pub fn keys(&self) -> Keys<'_, A> {
+  pub fn keys(&self) -> Keys<'_, T> {
     let m = self.mixer;
     let s = self.shift;
     let r = self.space;
@@ -711,10 +711,10 @@ impl<T> HashMapNZ64<T> {
   }
 
   /// Returns an iterator yielding a reference to each value. The iterator item
-  /// type is `&'_ A`.
+  /// type is `&'_ T`.
 
   #[inline]
-  pub fn values(&self) -> Values<'_, A> {
+  pub fn values(&self) -> Values<'_, T> {
     let s = self.shift;
     let r = self.space;
     let b = self.check;
@@ -725,10 +725,10 @@ impl<T> HashMapNZ64<T> {
   }
 
   /// Returns an iterator yielding a mutable reference to each value. The
-  /// iterator item type is `&'_ mut A`.
+  /// iterator item type is `&'_ mut T`.
 
   #[inline]
-  pub fn values_mut(&mut self) -> ValuesMut<'_, A> {
+  pub fn values_mut(&mut self) -> ValuesMut<'_, T> {
     let s = self.shift;
     let r = self.space;
     let b = self.check as *mut Slot<T>;
@@ -739,7 +739,7 @@ impl<T> HashMapNZ64<T> {
   }
 
   /// Returns an iterator yielding each value and consuming the map. The
-  /// iterator item type is `A`.
+  /// iterator item type is `T`.
 
   #[inline]
   pub fn into_values(self) -> IntoValues<T> {
@@ -787,7 +787,7 @@ impl<T> HashMapNZ64<T> {
 
     if n == 0 { return 0.; }
 
-    (k as f64) / (n as f64) 
+    (k as f64) / (n as f64)
   }
 
   #[inline]
@@ -819,23 +819,23 @@ impl<T> Drop for HashMapNZ64<T> {
 }
 
 impl<T> Index<NonZeroU64> for HashMapNZ64<T> {
-  type Output = A;
+  type Output = T;
 
   #[inline]
-  fn index(&self, key: NonZeroU64) -> &A {
+  fn index(&self, key: NonZeroU64) -> &T {
     self.get(key).unwrap()
   }
 }
 
 impl<T> IndexMut<NonZeroU64> for HashMapNZ64<T> {
   #[inline]
-  fn index_mut(&mut self, key: NonZeroU64) -> &mut A {
+  fn index_mut(&mut self, key: NonZeroU64) -> &mut T {
     self.get_mut(key).unwrap()
   }
 }
 
 impl<T> IntoIterator for HashMapNZ64<T> {
-  type Item = (NonZeroU64, A);
+  type Item = (NonZeroU64, T);
 
   type IntoIter = IntoIter<T>;
 
@@ -863,7 +863,7 @@ impl<T> IntoIterator for HashMapNZ64<T> {
 
 impl<T: fmt::Debug> fmt::Debug for HashMapNZ64<T> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-    let mut items = self.iter().collect::<Vec<(NonZeroU64, &A)>>();
+    let mut items = self.iter().collect::<Vec<(NonZeroU64, &T)>>();
 
     items.sort_by_key(|x| x.0);
 
@@ -877,24 +877,24 @@ impl<T: fmt::Debug> fmt::Debug for HashMapNZ64<T> {
   }
 }
 
-impl<'a, A> OccupiedEntry<'a, A> {
-  pub fn get(&self) -> &A {
+impl<'a, T> OccupiedEntry<'a, T> {
+  pub fn get(&self) -> &T {
     unsafe { (&*self.ptr).value.assume_init_ref() }
   }
 
-  pub fn get_mut(&mut self) -> &mut A {
+  pub fn get_mut(&mut self) -> &mut T {
     unsafe { (&mut *self.ptr).value.assume_init_mut() }
   }
 
-  pub fn into_mut(self) -> &'a mut A {
+  pub fn into_mut(self) -> &'a mut T {
     unsafe { (&mut *self.ptr).value.assume_init_mut() }
   }
 
-  pub fn insert(&mut self, value: A) -> A {
+  pub fn insert(&mut self, value: T) -> T {
     mem::replace(self.get_mut(), value)
   }
 
-  pub fn remove(self) -> A {
+  pub fn remove(self) -> T {
     let mut p = self.ptr;
     let o = self.map;
     let t = o.table as *mut Slot<T>;
@@ -921,8 +921,8 @@ impl<'a, A> OccupiedEntry<'a, A> {
   }
 }
 
-impl<'a, A> VacantEntry<'a, A> {
-  pub fn insert(self, value: A) -> &'a mut A {
+impl<'a, T> VacantEntry<'a, T> {
+  pub fn insert(self, value: T) -> &'a mut T {
     // TODO: make this efficient
 
     self.map.insert(self.key, value);
@@ -930,8 +930,8 @@ impl<'a, A> VacantEntry<'a, A> {
   }
 }
 
-impl<'a, A> Iterator for Iter<'a, A> {
-  type Item = (NonZeroU64, &'a A);
+impl<'a, T> Iterator for Iter<'a, T> {
+  type Item = (NonZeroU64, &'a T);
 
   #[inline]
   fn next(&mut self) -> Option<Self::Item> {
@@ -962,8 +962,8 @@ impl<'a, A> Iterator for Iter<'a, A> {
   }
 }
 
-impl<'a, A> Iterator for IterMut<'a, A> {
-  type Item = (NonZeroU64, &'a mut A);
+impl<'a, T> Iterator for IterMut<'a, T> {
+  type Item = (NonZeroU64, &'a mut T);
 
   #[inline]
   fn next(&mut self) -> Option<Self::Item> {
@@ -994,7 +994,7 @@ impl<'a, A> Iterator for IterMut<'a, A> {
   }
 }
 
-impl<'a, A> Iterator for Keys<'a, A> {
+impl<'a, T> Iterator for Keys<'a, T> {
   type Item = NonZeroU64;
 
   #[inline]
@@ -1025,8 +1025,8 @@ impl<'a, A> Iterator for Keys<'a, A> {
   }
 }
 
-impl<'a, A> Iterator for Values<'a, A> {
-  type Item = &'a A;
+impl<'a, T> Iterator for Values<'a, T> {
+  type Item = &'a T;
 
   #[inline]
   fn next(&mut self) -> Option<Self::Item> {
@@ -1056,8 +1056,8 @@ impl<'a, A> Iterator for Values<'a, A> {
   }
 }
 
-impl<'a, A> Iterator for ValuesMut<'a, A> {
-  type Item = &'a mut A;
+impl<'a, T> Iterator for ValuesMut<'a, T> {
+  type Item = &'a mut T;
 
   #[inline]
   fn next(&mut self) -> Option<Self::Item> {
@@ -1088,7 +1088,7 @@ impl<'a, A> Iterator for ValuesMut<'a, A> {
 }
 
 impl<T> Iterator for IntoIter<T> {
-  type Item = (NonZeroU64, A);
+  type Item = (NonZeroU64, T);
 
   #[inline]
   fn next(&mut self) -> Option<Self::Item> {
@@ -1135,7 +1135,7 @@ impl<T> Drop for IntoIter<T> {
 }
 
 impl<T> Iterator for IntoValues<T> {
-  type Item = A;
+  type Item = T;
 
   #[inline]
   fn next(&mut self) -> Option<Self::Item> {

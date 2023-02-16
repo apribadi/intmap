@@ -7,13 +7,15 @@ const NUM_OPERATIONS: usize = 20_000_000;
 const KEY_ROTATE_LEFT: u32 = 16;
 
 fn sizes() -> Box<[usize]> {
-  [ 
+  [
     1,
     10,
     100,
     1000,
     10000,
     100000,
+    // 1000000,
+    // 10000000,
   ].iter().flat_map(|a|
     [
       10,
@@ -57,7 +59,8 @@ fn bench_get_100pct<T: BenchMap>(size: usize) -> f64 {
     s.push(k)
   }
 
-  let elapsed = timeit(|| {
+  #[inline(never)]
+  fn go<T: BenchMap>(t: T, s: Vec<NonZeroU64>) -> u64 {
     let mut a: u64 = 0;
     for k in s {
       if let Some(v) = t.get(k) {
@@ -65,7 +68,9 @@ fn bench_get_100pct<T: BenchMap>(size: usize) -> f64 {
       }
     }
     a
-  });
+  }
+
+  let elapsed = timeit(|| go(t, s));
 
   elapsed / (NUM_OPERATIONS as f64)
 }
@@ -89,7 +94,8 @@ fn bench_get_50pct<T: BenchMap>(size: usize) -> f64 {
     }
   }
 
-  let elapsed = timeit(|| {
+  #[inline(never)]
+  fn go<T: BenchMap>(t: T, s: Vec<NonZeroU64>) -> u64 {
     let mut a: u64 = 0;
     for k in s {
       if let Some(v) = t.get(k) {
@@ -97,7 +103,9 @@ fn bench_get_50pct<T: BenchMap>(size: usize) -> f64 {
       }
     }
     a
-  });
+  }
+
+  let elapsed = timeit(|| go(t, s));
 
   elapsed / (NUM_OPERATIONS as f64)
 }
@@ -156,8 +164,14 @@ fn bench_remove_insert<T: BenchMap>(size: usize) -> f64 {
   elapsed / (NUM_OPERATIONS as f64)
 }
 
+fn warmup() {
+  let mut s = 1u64;
+  for i in 0 .. 2_000_000_000 { s = s.wrapping_mul(i); }
+  let _: u64 = hint::black_box(s);
+}
+
 fn main() {
-  fn go<T: BenchMap>(name: &'static str) {
+  fn doit<T: BenchMap>(name: &'static str) {
     for &size in sizes().iter() {
       let _ = bench_get_50pct::<T>;
       let _ = bench_get_100pct::<T>;
@@ -173,13 +187,16 @@ fn main() {
       */
     }
   }
-  // go::<HashMap<NonZeroU64, u64>>("HashMap");
-  go::<AHashMap<NonZeroU64, u64>>("AHashMap");
-  go::<HashMapNZ64<u64>>("HashMapNZ64");
-  // go::<FxHashMap<NonZeroU64, u64>>("FxHashMap");
-  // go::<IntMap<u64>>("IntMap");
-  go::<BTreeMap<NonZeroU64, u64>>("BTreeMap");
-  // go::<FakeMap>("FakeMap");
+
+  warmup();
+
+  // doit::<HashMap<NonZeroU64, u64>>("HashMap");
+  doit::<HashMapNZ64<u64>>("HashMapNZ64");
+  doit::<AHashMap<NonZeroU64, u64>>("AHashMap");
+  // doit::<FxHashMap<NonZeroU64, u64>>("FxHashMap");
+  // doit::<IntMap<u64>>("IntMap");
+  // doit::<BTreeMap<NonZeroU64, u64>>("BTreeMap");
+  // doit::<FakeMap>("FakeMap");
   //
   /*
   fn go2<T: BenchMap>(name: &'static str) {
