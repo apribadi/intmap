@@ -315,8 +315,8 @@ impl<T> HashMapNZ64<T> {
     let size = INITIAL_N * mem::size_of::<Slot<T>>();
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
-    let a = unsafe { std::alloc::alloc_zeroed(layout) } as *mut Slot<T>;
-    if a.is_null() { match std::alloc::handle_alloc_error(layout) {} }
+    let a = unsafe { alloc::alloc::alloc_zeroed(layout) } as *mut Slot<T>;
+    if a.is_null() { match alloc::alloc::handle_alloc_error(layout) {} }
 
     let t = unsafe { a.add(INITIAL_D - 1) };
     let b = unsafe { a.add(INITIAL_N - 1) };
@@ -396,8 +396,8 @@ impl<T> HashMapNZ64<T> {
     let old_layout = unsafe { Layout::from_size_align_unchecked(old_size, align) };
     let new_layout = unsafe { Layout::from_size_align_unchecked(new_size, align) };
 
-    let new_a = unsafe { std::alloc::alloc_zeroed(new_layout) } as *mut Slot<T>;
-    if new_a.is_null() { match std::alloc::handle_alloc_error(new_layout) {} }
+    let new_a = unsafe { alloc::alloc::alloc_zeroed(new_layout) } as *mut Slot<T>;
+    if new_a.is_null() { match alloc::alloc::handle_alloc_error(new_layout) {} }
 
     // At this point, we know that allocating a new table has succeeded, so we
     // undo our earlier `if is_overflow { ... }` block.
@@ -433,7 +433,7 @@ impl<T> HashMapNZ64<T> {
 
     // The map is now in a valid state, even if `dealloc` panics.
 
-    unsafe { std::alloc::dealloc(old_a as *mut u8, old_layout) };
+    unsafe { alloc::alloc::dealloc(old_a as *mut u8, old_layout) };
   }
 
   /// Inserts the given key and value into the map. Returns the previous value
@@ -662,7 +662,7 @@ impl<T> HashMapNZ64<T> {
     let size = n * mem::size_of::<Slot<T>>();
     let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
-    unsafe { std::alloc::dealloc(a as *mut u8, layout) };
+    unsafe { alloc::alloc::dealloc(a as *mut u8, layout) };
   }
 
   /// Returns an iterator yielding each key and a reference to its associated
@@ -1129,7 +1129,7 @@ impl<T> Drop for IntoIter<T> {
       let align = mem::align_of::<Slot<T>>();
       let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
-      unsafe { std::alloc::dealloc(self.mem.0, layout) };
+      unsafe { alloc::alloc::dealloc(self.mem.0, layout) };
     }
   }
 }
@@ -1175,7 +1175,7 @@ impl<T> Drop for IntoValues<T> {
       let align = mem::align_of::<Slot<T>>();
       let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
 
-      unsafe { std::alloc::dealloc(self.mem.0, layout) };
+      unsafe { alloc::alloc::dealloc(self.mem.0, layout) };
     }
   }
 }
