@@ -1,6 +1,7 @@
 pub(crate) extern crate alloc;
 
 pub(crate) use core::alloc::Layout;
+pub(crate) use core::cell::Cell;
 pub(crate) use core::cmp::max;
 pub(crate) use core::fmt;
 pub(crate) use core::hint;
