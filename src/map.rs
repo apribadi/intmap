@@ -870,7 +870,7 @@ impl<T: fmt::Debug> fmt::Debug for HashMapNZ64<T> {
     let mut f = f.debug_map();
 
     for (key, value) in items.iter() {
-      f.entry(key, value);
+      let _: _ = f.entry(key, value);
     }
 
     f.finish()
@@ -925,7 +925,7 @@ impl<'a, T> VacantEntry<'a, T> {
   pub fn insert(self, value: T) -> &'a mut T {
     // TODO: make this efficient
 
-    self.map.insert(self.key, value);
+    let _: _ = self.map.insert(self.key, value);
     self.map.get_mut(self.key).unwrap()
   }
 }

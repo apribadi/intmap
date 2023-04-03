@@ -69,7 +69,7 @@ impl fmt::Debug for HashSetNZ64 {
     let mut f = f.debug_set();
 
     for key in a.iter() {
-      f.entry(key);
+      let _: _ = f.entry(key);
     }
 
     f.finish()
