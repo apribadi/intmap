@@ -11,7 +11,7 @@ const fn umulh(x: u64, y: u64) -> u64 {
 const fn state_from_seed(s: u128) -> NonZeroU128 {
   const M: u128 = 0x9670_4a6b_b5d2_c4fb_3aa6_45df_0540_268d;
   let s = s.wrapping_mul(M);
-  let s = s | 1;
+  let s = s.saturating_add(1);
   let s = s.swap_bytes();
   let s = s.wrapping_mul(M);
   let s = s.swap_bytes();
@@ -63,7 +63,7 @@ impl Rng {
     let a = self.u64();
     let b = self.u64();
     let s = (a as u128) | ((b as u128) << 64);
-    let s = s | 1;
+    let s = s.saturating_add(1);
     let s = unsafe { NonZeroU128::new_unchecked(s) };
     Self::from_state(s)
   }

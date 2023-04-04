@@ -1,21 +1,8 @@
 //! This module implements a fast hash map keyed by `NonZeroU64`s.
-//!
-//! blah blah blah
-//!
-//! blah blah blah
-//!
-//! design discussion
-
-// TODO: drain
-// TODO: clone
-// TODO: retain
 
 use crate::prelude::*;
 
 /// A fast hash map keyed by `NonZeroU64`s.
-///
-/// The [module documentation](self) discusses design tradeoffs of this data
-/// structure.
 
 pub struct HashMapNZ64<T> {
   mixer: Mixer,
@@ -188,7 +175,7 @@ impl<T> HashMapNZ64<T> {
   /// Creates an empty map, seeding the hash mixer from a thread-local random
   /// number generator.
 
-  #[inline]
+  #[inline(always)]
   pub fn new() -> Self {
     Self {
       mixer: Mixer::new(rng::thread_local::u64()),
@@ -202,7 +189,7 @@ impl<T> HashMapNZ64<T> {
   /// Creates an empty map, seeding the hash mixer from the given random number
   /// generator.
 
-  #[inline]
+  #[inline(always)]
   pub fn new_seeded(rng: &mut Rng) -> Self {
     Self {
       mixer: Mixer::new(rng.u64()),
@@ -215,7 +202,7 @@ impl<T> HashMapNZ64<T> {
 
   /// Returns the number of items.
 
-  #[inline]
+  #[inline(always)]
   pub fn len(&self) -> usize {
     let s = self.shift;
     let r = self.space;
@@ -226,14 +213,14 @@ impl<T> HashMapNZ64<T> {
 
   /// Returns whether the map contains zero items.
 
-  #[inline]
+  #[inline(always)]
   pub fn is_empty(&self) -> bool {
     self.len() == 0
   }
 
   /// Returns whether the map contains the given key.
 
-  #[inline]
+  #[inline(always)]
   pub fn contains_key(&self, key: NonZeroU64) -> bool {
     let t = self.table;
 
@@ -257,7 +244,7 @@ impl<T> HashMapNZ64<T> {
   /// Returns a reference to the value associated with the given key, if
   /// present.
 
-  #[inline]
+  #[inline(always)]
   pub fn get(&self, key: NonZeroU64) -> Option<&T> {
     let t = self.table;
 
@@ -283,7 +270,7 @@ impl<T> HashMapNZ64<T> {
   /// Returns a mutable reference to the value associated with the given key,
   /// if present.
 
-  #[inline]
+  #[inline(always)]
   pub fn get_mut(&mut self, key: NonZeroU64) -> Option<&mut T> {
     let t = self.table as *mut Slot<T>;
 
@@ -445,13 +432,12 @@ impl<T> HashMapNZ64<T> {
   /// to leak an arbitrary set of items, but the map will remain in a valid
   /// state.
 
-  #[inline]
+  #[inline(always)]
   pub fn insert(&mut self, key: NonZeroU64, value: T) -> Option<T> {
     let t = self.table as *mut Slot<T>;
 
     if t.is_null() {
       unsafe { self.internal_init_table_and_insert(key, value) };
-
       return None;
     }
 
@@ -469,7 +455,6 @@ impl<T> HashMapNZ64<T> {
 
     if x == h {
       let v = mem::replace(unsafe { (&mut *p).value.assume_init_mut() }, value);
-
       return Some(v);
     }
 
@@ -497,7 +482,7 @@ impl<T> HashMapNZ64<T> {
   /// Removes the given key from the map. Returns the previous value associated
   /// with the given key, if one was present.
 
-  #[inline]
+  #[inline(always)]
   pub fn remove(&mut self, key: NonZeroU64) -> Option<T> {
     let t = self.table as *mut Slot<T>;
 
@@ -537,7 +522,7 @@ impl<T> HashMapNZ64<T> {
     Some(v)
   }
 
-  #[inline]
+  #[inline(always)]
   pub fn entry(&mut self, key: NonZeroU64) -> Entry<'_, T> {
     let t = self.table as *mut Slot<T>;
 
@@ -564,7 +549,6 @@ impl<T> HashMapNZ64<T> {
 
   /// Removes every item from the map. Retains heap-allocated memory.
 
-  #[inline]
   pub fn clear(&mut self) {
     let t = self.table as *mut Slot<T>;
 
@@ -621,7 +605,6 @@ impl<T> HashMapNZ64<T> {
 
   /// Removes every item from the map. Releases heap-allocated memory.
 
-  #[inline]
   pub fn reset(&mut self) {
     let t = self.table as *mut Slot<T>;
 
@@ -668,7 +651,6 @@ impl<T> HashMapNZ64<T> {
   /// Returns an iterator yielding each key and a reference to its associated
   /// value. The iterator item type is `(NonZeroU64, &'_ T)`.
 
-  #[inline]
   pub fn iter(&self) -> Iter<'_, T> {
     let m = self.mixer;
     let s = self.shift;
@@ -683,7 +665,6 @@ impl<T> HashMapNZ64<T> {
   /// Returns an iterator yielding each key and a mutable reference to its
   /// associated value. The iterator item type is `(NonZeroU64, &'_ mut T)`.
 
-  #[inline]
   pub fn iter_mut(&mut self) -> IterMut<'_, T> {
     let m = self.mixer;
     let s = self.shift;
@@ -698,7 +679,6 @@ impl<T> HashMapNZ64<T> {
   /// Returns an iterator yielding each key. The iterator item type is
   /// `NonZeroU64`.
 
-  #[inline]
   pub fn keys(&self) -> Keys<'_, T> {
     let m = self.mixer;
     let s = self.shift;
@@ -713,7 +693,6 @@ impl<T> HashMapNZ64<T> {
   /// Returns an iterator yielding a reference to each value. The iterator item
   /// type is `&'_ T`.
 
-  #[inline]
   pub fn values(&self) -> Values<'_, T> {
     let s = self.shift;
     let r = self.space;
@@ -727,7 +706,6 @@ impl<T> HashMapNZ64<T> {
   /// Returns an iterator yielding a mutable reference to each value. The
   /// iterator item type is `&'_ mut T`.
 
-  #[inline]
   pub fn values_mut(&mut self) -> ValuesMut<'_, T> {
     let s = self.shift;
     let r = self.space;
@@ -741,7 +719,6 @@ impl<T> HashMapNZ64<T> {
   /// Returns an iterator yielding each value and consuming the map. The
   /// iterator item type is `T`.
 
-  #[inline]
   pub fn into_values(self) -> IntoValues<T> {
     let o = ManuallyDrop::new(self);
     let t = o.table;
@@ -761,7 +738,6 @@ impl<T> HashMapNZ64<T> {
     IntoValues { len: k, ptr: b, mem: (a, n * mem::size_of::<Slot<T>>()) }
   }
 
-  #[inline]
   fn internal_num_slots(&self) -> usize {
     let t = self.table;
 
@@ -775,12 +751,10 @@ impl<T> HashMapNZ64<T> {
     n
   }
 
-  #[inline]
   fn internal_num_bytes(&self) -> usize {
     self.internal_num_slots() * mem::size_of::<Slot<T>>()
   }
 
-  #[inline]
   fn internal_load(&self) -> f64 {
     let k = self.len();
     let n = self.internal_num_slots();
@@ -790,7 +764,6 @@ impl<T> HashMapNZ64<T> {
     (k as f64) / (n as f64)
   }
 
-  #[inline]
   fn internal_allocation_info(&self) -> Option<(NonNull<u8>, Layout)> {
     let t = self.table;
 
@@ -812,7 +785,6 @@ impl<T> HashMapNZ64<T> {
 }
 
 impl<T> Drop for HashMapNZ64<T> {
-  #[inline]
   fn drop(&mut self) {
     self.reset()
   }
@@ -821,14 +793,14 @@ impl<T> Drop for HashMapNZ64<T> {
 impl<T> Index<NonZeroU64> for HashMapNZ64<T> {
   type Output = T;
 
-  #[inline]
+  #[inline(always)]
   fn index(&self, key: NonZeroU64) -> &T {
     self.get(key).unwrap()
   }
 }
 
 impl<T> IndexMut<NonZeroU64> for HashMapNZ64<T> {
-  #[inline]
+  #[inline(always)]
   fn index_mut(&mut self, key: NonZeroU64) -> &mut T {
     self.get_mut(key).unwrap()
   }
@@ -839,7 +811,6 @@ impl<T> IntoIterator for HashMapNZ64<T> {
 
   type IntoIter = IntoIter<T>;
 
-  #[inline]
   fn into_iter(self) -> IntoIter<T> {
     let o = ManuallyDrop::new(self);
     let m = o.mixer;
@@ -878,22 +849,27 @@ impl<T: fmt::Debug> fmt::Debug for HashMapNZ64<T> {
 }
 
 impl<'a, T> OccupiedEntry<'a, T> {
+  #[inline(always)]
   pub fn get(&self) -> &T {
     unsafe { (&*self.ptr).value.assume_init_ref() }
   }
 
+  #[inline(always)]
   pub fn get_mut(&mut self) -> &mut T {
     unsafe { (&mut *self.ptr).value.assume_init_mut() }
   }
 
+  #[inline(always)]
   pub fn into_mut(self) -> &'a mut T {
     unsafe { (&mut *self.ptr).value.assume_init_mut() }
   }
 
+  #[inline(always)]
   pub fn insert(&mut self, value: T) -> T {
     mem::replace(self.get_mut(), value)
   }
 
+  #[inline(always)]
   pub fn remove(self) -> T {
     let mut p = self.ptr;
     let o = self.map;
@@ -933,7 +909,7 @@ impl<'a, T> VacantEntry<'a, T> {
 impl<'a, T> Iterator for Iter<'a, T> {
   type Item = (NonZeroU64, &'a T);
 
-  #[inline]
+  #[inline(always)]
   fn next(&mut self) -> Option<Self::Item> {
     let k = self.len;
 
@@ -956,7 +932,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
     Some((x, v))
   }
 
-  #[inline]
+  #[inline(always)]
   fn size_hint(&self) -> (usize, Option<usize>) {
     (self.len, Some(self.len))
   }
@@ -965,7 +941,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
 impl<'a, T> Iterator for IterMut<'a, T> {
   type Item = (NonZeroU64, &'a mut T);
 
-  #[inline]
+  #[inline(always)]
   fn next(&mut self) -> Option<Self::Item> {
     let k = self.len;
 
@@ -988,7 +964,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
     Some((x, v))
   }
 
-  #[inline]
+  #[inline(always)]
   fn size_hint(&self) -> (usize, Option<usize>) {
     (self.len, Some(self.len))
   }
@@ -997,7 +973,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
 impl<'a, T> Iterator for Keys<'a, T> {
   type Item = NonZeroU64;
 
-  #[inline]
+  #[inline(always)]
   fn next(&mut self) -> Option<Self::Item> {
     let k = self.len;
 
@@ -1019,7 +995,7 @@ impl<'a, T> Iterator for Keys<'a, T> {
     Some(x)
   }
 
-  #[inline]
+  #[inline(always)]
   fn size_hint(&self) -> (usize, Option<usize>) {
     (self.len, Some(self.len))
   }
@@ -1028,7 +1004,7 @@ impl<'a, T> Iterator for Keys<'a, T> {
 impl<'a, T> Iterator for Values<'a, T> {
   type Item = &'a T;
 
-  #[inline]
+  #[inline(always)]
   fn next(&mut self) -> Option<Self::Item> {
     let k = self.len;
 
@@ -1050,7 +1026,7 @@ impl<'a, T> Iterator for Values<'a, T> {
     Some(v)
   }
 
-  #[inline]
+  #[inline(always)]
   fn size_hint(&self) -> (usize, Option<usize>) {
     (self.len, Some(self.len))
   }
@@ -1059,7 +1035,7 @@ impl<'a, T> Iterator for Values<'a, T> {
 impl<'a, T> Iterator for ValuesMut<'a, T> {
   type Item = &'a mut T;
 
-  #[inline]
+  #[inline(always)]
   fn next(&mut self) -> Option<Self::Item> {
     let k = self.len;
 
@@ -1081,7 +1057,7 @@ impl<'a, T> Iterator for ValuesMut<'a, T> {
     Some(v)
   }
 
-  #[inline]
+  #[inline(always)]
   fn size_hint(&self) -> (usize, Option<usize>) {
     (self.len, Some(self.len))
   }
@@ -1090,7 +1066,7 @@ impl<'a, T> Iterator for ValuesMut<'a, T> {
 impl<T> Iterator for IntoIter<T> {
   type Item = (NonZeroU64, T);
 
-  #[inline]
+  #[inline(always)]
   fn next(&mut self) -> Option<Self::Item> {
     let k = self.len;
 
@@ -1113,14 +1089,13 @@ impl<T> Iterator for IntoIter<T> {
     Some((x, v))
   }
 
-  #[inline]
+  #[inline(always)]
   fn size_hint(&self) -> (usize, Option<usize>) {
     (self.len, Some(self.len))
   }
 }
 
 impl<T> Drop for IntoIter<T> {
-  #[inline]
   fn drop(&mut self) {
     for (_, v) in &mut *self { drop::<T>(v) }
 
@@ -1137,7 +1112,7 @@ impl<T> Drop for IntoIter<T> {
 impl<T> Iterator for IntoValues<T> {
   type Item = T;
 
-  #[inline]
+  #[inline(always)]
   fn next(&mut self) -> Option<Self::Item> {
     let k = self.len;
 
@@ -1159,14 +1134,13 @@ impl<T> Iterator for IntoValues<T> {
     Some(v)
   }
 
-  #[inline]
+  #[inline(always)]
   fn size_hint(&self) -> (usize, Option<usize>) {
     (self.len, Some(self.len))
   }
 }
 
 impl<T> Drop for IntoValues<T> {
-  #[inline]
   fn drop(&mut self) {
     for v in &mut *self { drop::<T>(v) }
 
@@ -1185,22 +1159,18 @@ pub mod internal {
 
   use super::*;
 
-  #[inline]
   pub fn num_slots<T>(t: &HashMapNZ64<T>) -> usize {
     t.internal_num_slots()
   }
 
-  #[inline]
   pub fn num_bytes<T>(t: &HashMapNZ64<T>) -> usize {
     t.internal_num_bytes()
   }
 
-  #[inline]
   pub fn load<T>(t: &HashMapNZ64<T>) -> f64 {
     t.internal_load()
   }
 
-  #[inline]
   pub fn allocation_info<T>(t: &HashMapNZ64<T>) -> Option<(NonNull<u8>, Layout)> {
     t.internal_allocation_info()
   }

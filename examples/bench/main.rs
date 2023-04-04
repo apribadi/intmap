@@ -3,15 +3,23 @@ mod maps;
 
 use crate::prelude::*;
 
-const NUM_OPERATIONS: usize = 20_000_000;
+const NUM_OPERATIONS: usize = 1_000;
 const KEY_ROTATE_LEFT: u32 = 16;
 
 fn sizes() -> Box<[usize]> {
+  if false {
+    Box::new([
+      20_000_usize,
+      20_000_usize,
+      20_000_usize,
+      20_000_usize,
+    ])
+  } else {
   [
-    1,
-    10,
-    100,
-    1000,
+    //1,
+    //10,
+    //100,
+    //1000,
     10000,
     100000,
     // 1000000,
@@ -28,6 +36,7 @@ fn sizes() -> Box<[usize]> {
       75,
     ].map(|b| a * b)
   ).collect::<Vec<_>>().into_boxed_slice()
+  }
 }
 
 #[inline]
@@ -45,14 +54,9 @@ fn timeit<F, A>(f: F) -> f64 where F: FnOnce() -> A {
 }
 
 fn bench_get_100pct<T: BenchMap>(size: usize) -> f64 {
-  let mut g = Rng::new_hashed(42);
+  let mut g = Rng::from_seed(42);
   let mut t = T::new();
   let mut s = Vec::with_capacity(NUM_OPERATIONS);
-
-  for i in 0 .. size {
-    let k = key_seq(i);
-    t.insert(k, u64::from(k));
-  }
 
   for _ in 0 .. NUM_OPERATIONS {
     let r = g.bounded_u32((size - 1) as u32);
@@ -60,10 +64,24 @@ fn bench_get_100pct<T: BenchMap>(size: usize) -> f64 {
     s.push(k)
   }
 
+  for i in 0 .. size {
+    let k = key_seq(i);
+    t.insert(k, u64::from(k));
+  }
+
+  {
+    // flush cache
+    let mut a = Vec::new();
+    for i in 0 .. 128_000_000u64 {
+      a.push(i)
+    }
+    let _:_ = hint::black_box(a);
+  }
+
   #[inline(never)]
   fn go<T: BenchMap>(t: T, s: Vec<NonZeroU64>) -> u64 {
     let mut a: u64 = 0;
-    for k in s {
+    for &k in s.iter() {
       if let Some(v) = t.get(k) {
         a = a.wrapping_add(v)
       }
@@ -77,7 +95,7 @@ fn bench_get_100pct<T: BenchMap>(size: usize) -> f64 {
 }
 
 fn bench_get_50pct<T: BenchMap>(size: usize) -> f64 {
-  let mut g = Rng::new_hashed(42);
+  let mut g = Rng::from_seed(42);
   let mut t = T::new();
   let mut s = Vec::with_capacity(NUM_OPERATIONS);
 
@@ -122,7 +140,7 @@ fn bench_memory<T: BenchMap>(size: usize) -> f64 {
 }
 
 fn bench_remove_insert<T: BenchMap>(size: usize) -> f64 {
-  let mut g = Rng::new_hashed(42);
+  let mut g = Rng::from_seed(42);
   let mut t = T::new();
   let mut a = Vec::from_iter((0 .. size).map(|i| key_seq(i)));
   let mut s = Vec::with_capacity(NUM_OPERATIONS);
@@ -192,8 +210,8 @@ fn main() {
   warmup();
 
   // doit::<HashMap<NonZeroU64, u64>>("HashMap");
-  doit::<HashMapNZ64<u64>>("HashMapNZ64");
   doit::<AHashMap<NonZeroU64, u64>>("AHashMap");
+  doit::<HashMapNZ64<u64>>("HashMapNZ64");
   // doit::<FxHashMap<NonZeroU64, u64>>("FxHashMap");
   // doit::<IntMap<u64>>("IntMap");
   // doit::<BTreeMap<NonZeroU64, u64>>("BTreeMap");
