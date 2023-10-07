@@ -1,9 +1,9 @@
 pub(crate) extern crate alloc;
 
 pub(crate) use core::alloc::Layout;
+pub(crate) use core::cell::Cell;
 pub(crate) use core::cmp::max;
 pub(crate) use core::fmt;
-pub(crate) use core::hint;
 pub(crate) use core::iter::FusedIterator;
 pub(crate) use core::marker::PhantomData;
 pub(crate) use core::mem::ManuallyDrop;
@@ -19,11 +19,6 @@ pub(crate) use crate::map::HashMapNZ64;
 pub(crate) use crate::map;
 pub(crate) use crate::rng::Rng;
 pub(crate) use crate::rng;
-
-#[inline(always)]
-pub(crate) const unsafe fn assume(p: bool) {
-  if ! p { unsafe { hint::unreachable_unchecked() } }
-}
 
 #[inline(always)]
 #[cold]

@@ -48,19 +48,16 @@ impl Rng {
     Self(s)
   }
 
-  #[inline(always)]
-  pub const fn state(&self) -> NonZeroU128 {
-    self.0
+  #[inline(never)]
+  pub fn from_entropy() -> Self {
+    let mut seed = [0; 16];
+    getrandom::getrandom(&mut seed).expect("getrandom::getrandom failed!");
+    Self::from_seed(seed)
   }
 
   #[inline(always)]
-  pub fn split(&mut self) -> Self {
-    let x = self.u64();
-    let y = self.u64();
-    let s = (x as u128) | ((y as u128) << 64);
-    let s = s.saturating_add(1);
-    let s = unsafe { NonZeroU128::new_unchecked(s) };
-    Self::new(s)
+  pub const fn state(&self) -> NonZeroU128 {
+    self.0
   }
 
   #[inline(always)]
@@ -76,6 +73,16 @@ impl Rng {
     let s = unsafe { NonZeroU128::new_unchecked(s) };
     self.0 = s;
     x
+  }
+
+  #[inline(always)]
+  pub fn split(&mut self) -> Self {
+    let a = self.u64();
+    let b = self.u64();
+    let s = concat(a, b);
+    let s = s ^ (s == 0) as u128;
+    let s = unsafe { NonZeroU128::new_unchecked(s) };
+    Self(s)
   }
 
   #[inline(always)]
@@ -103,37 +110,21 @@ pub mod thread_local {
   use super::*;
 
   std::thread_local! {
-    static RNG: core::cell::Cell<u128> = const { core::cell::Cell::new(0) };
+    static RNG: Cell<Option<NonZeroU128>> = const { Cell::new(None) };
   }
 
   #[inline(always)]
-  fn with<F, T>(f: F) -> T
+  pub fn with<F, T>(f: F) -> T
   where
     F: FnOnce(&mut Rng) -> T
   {
-    RNG.with(|cell| {
-      let mut g =
-        match NonZeroU128::new(cell.get()) {
-          None => {
-            let mut seed = [0; 16];
-            getrandom::getrandom(&mut seed).expect("getrandom::getrandom failed!");
-            Rng::from_seed(seed)
-          }
-          Some(s) => {
-            Rng::new(s)
-          }
-        };
-      let x = f(&mut g);
-      cell.set(g.state().get());
-      x
-    })
-  }
-
-  pub fn split() -> Rng {
-    with(Rng::split)
-  }
-
-  pub fn u64() -> u64 {
-    with(Rng::u64)
+    let mut rng =
+      match RNG.get() {
+        None => Rng::from_entropy(),
+        Some(s) => Rng::new(s)
+      };
+    let x = f(&mut rng);
+    RNG.set(Some(rng.state()));
+    x
   }
 }

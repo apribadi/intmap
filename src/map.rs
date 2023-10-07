@@ -131,8 +131,7 @@ const INITIAL_R: isize = INITIAL_C;
 
 #[inline(always)]
 const unsafe fn spot(shift: usize, h: u64) -> isize {
-  unsafe { assume(shift <= 64) };
-  (h >> shift) as isize
+  (h >> (shift & 63)) as isize
 }
 
 #[inline(always)]
@@ -178,7 +177,7 @@ impl<T> HashMapNZ64<T> {
   #[inline(always)]
   pub fn new() -> Self {
     Self {
-      mixer: Mixer::new(rng::thread_local::u64()),
+      mixer: Mixer::new(rng::thread_local::with(|rng| rng.u64())),
       table: ptr::null(),
       shift: INITIAL_S,
       space: INITIAL_R,
