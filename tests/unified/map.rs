@@ -56,7 +56,7 @@ fn test_iter() -> Result<(), std::fmt::Error> {
 
   for i in 1 ..= 10 {
     let k = NonZeroU64::new(i).unwrap();
-    t.insert(k, 10 * i);
+    let _ = t.insert(k, 10 * i);
   }
 
   let it = t.values();
@@ -112,7 +112,7 @@ fn foo() -> Result<(), std::fmt::Error> {
 
   for i in 1 ..= 100 {
     let k = NonZeroU64::new(i).unwrap();
-    t.insert(k, 10 * i);
+    let _ = t.insert(k, 10 * i);
   }
 
   writeln!(s, "load = {:#?}", map::internal::load(&t))?;

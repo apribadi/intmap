@@ -786,7 +786,8 @@ impl<T> HashMapNZ64<T> {
 
 impl<T> Drop for HashMapNZ64<T> {
   fn drop(&mut self) {
-    self.reset()
+    let _ = self;
+    // self.reset()
   }
 }
 

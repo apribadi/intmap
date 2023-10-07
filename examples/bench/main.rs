@@ -17,9 +17,9 @@ fn sizes() -> Box<[usize]> {
   } else {
   [
     //1,
-    //10,
-    //100,
-    //1000,
+    10,
+    100,
+    1000,
     10000,
     100000,
     // 1000000,
@@ -45,11 +45,9 @@ fn key_seq(i: usize) -> NonZeroU64 {
 }
 
 fn timeit<F, A>(f: F) -> f64 where F: FnOnce() -> A {
-  let f = hint::black_box(f);
   let start = Instant::now();
-  let x: A = f();
+  let _: A = core::hint::black_box(f());
   let stop = Instant::now();
-  let _: A = hint::black_box(x);
   stop.saturating_duration_since(start).as_nanos() as f64
 }
 
@@ -66,30 +64,33 @@ fn bench_get_100pct<T: BenchMap>(size: usize) -> f64 {
 
   for i in 0 .. size {
     let k = key_seq(i);
-    t.insert(k, u64::from(k));
+    let _ = t.insert(k, u64::from(k));
   }
 
+
+  /*
   {
     // flush cache
     let mut a = Vec::new();
     for i in 0 .. 128_000_000u64 {
       a.push(i)
     }
-    let _:_ = hint::black_box(a);
+    let _:_ = core::hint::black_box(a);
   }
+  */
 
   #[inline(never)]
-  fn go<T: BenchMap>(t: T, s: Vec<NonZeroU64>) -> u64 {
+  fn go<T: BenchMap>(t: &mut T, s: &Vec<NonZeroU64>) -> u64 {
     let mut a: u64 = 0;
     for &k in s.iter() {
       if let Some(v) = t.get(k) {
-        a = a.wrapping_add(v)
+        a = a.wrapping_add(v);
       }
     }
     a
   }
 
-  let elapsed = timeit(|| go(t, s));
+  let elapsed = timeit(|| go(&mut t, &s));
 
   elapsed / (NUM_OPERATIONS as f64)
 }
@@ -101,7 +102,7 @@ fn bench_get_50pct<T: BenchMap>(size: usize) -> f64 {
 
   for i in 0 .. size {
     let k = key_seq(i);
-    t.insert(k, u64::from(k));
+    let _ = t.insert(k, u64::from(k));
   }
 
   for _ in 0 .. NUM_OPERATIONS {
@@ -114,9 +115,9 @@ fn bench_get_50pct<T: BenchMap>(size: usize) -> f64 {
   }
 
   #[inline(never)]
-  fn go<T: BenchMap>(t: T, s: Vec<NonZeroU64>) -> u64 {
+  fn go<T: BenchMap>(t: &mut T, s: &Vec<NonZeroU64>) -> u64 {
     let mut a: u64 = 0;
-    for k in s {
+    for &k in s {
       if let Some(v) = t.get(k) {
         a = a.wrapping_add(v)
       }
@@ -124,7 +125,7 @@ fn bench_get_50pct<T: BenchMap>(size: usize) -> f64 {
     a
   }
 
-  let elapsed = timeit(|| go(t, s));
+  let elapsed = timeit(|| go(&mut t, &s));
 
   elapsed / (NUM_OPERATIONS as f64)
 }
@@ -133,7 +134,7 @@ fn bench_memory<T: BenchMap>(size: usize) -> f64 {
   let mut t = T::new();
 
   for k in (0 .. size).map(key_seq) {
-    t.insert(k, u64::from(k));
+    let _ = t.insert(k, u64::from(k));
   }
 
   (t.heap_memory_in_bytes() as f64) / (size as f64)
@@ -146,7 +147,7 @@ fn bench_remove_insert<T: BenchMap>(size: usize) -> f64 {
   let mut s = Vec::with_capacity(NUM_OPERATIONS);
 
   for &k in a.iter() {
-    t.insert(k, u64::from(k));
+    let _ = t.insert(k, u64::from(k));
   }
 
   let mut i: usize = 0;
@@ -164,7 +165,8 @@ fn bench_remove_insert<T: BenchMap>(size: usize) -> f64 {
     i = i + 1;
   }
 
-  let elapsed = timeit(|| {
+  #[inline(never)]
+  fn go<T: BenchMap>(t: &mut T, s: &Vec<NonZeroU64>) -> u64 {
     let mut a: u64 = 0;
     let mut i: usize = 0;
     loop {
@@ -178,7 +180,9 @@ fn bench_remove_insert<T: BenchMap>(size: usize) -> f64 {
       i = i + 1;
     }
     a
-  });
+  }
+
+  let elapsed = timeit(|| go(&mut t, &s));
 
   elapsed / (NUM_OPERATIONS as f64)
 }
@@ -186,10 +190,11 @@ fn bench_remove_insert<T: BenchMap>(size: usize) -> f64 {
 fn warmup() {
   let mut s = 1u64;
   for i in 0 .. 2_000_000_000 { s = s.wrapping_mul(i); }
-  let _: u64 = hint::black_box(s);
+  let _: u64 = core::hint::black_box(s);
 }
 
 fn main() {
+  #[inline(never)]
   fn doit<T: BenchMap>(name: &'static str) {
     for &size in sizes().iter() {
       let _ = bench_get_50pct::<T>;
@@ -209,22 +214,31 @@ fn main() {
 
   warmup();
 
+  // doit::<AHashMap<NonZeroU64, u64>>("AHashMap");
+  // doit::<HashMapNZ64<u64>>("HashMapNZ64");
+  //
+  for &size in sizes().iter() {
+    let x = bench_remove_insert::<AHashMap<NonZeroU64, u64>>(size);
+    let y = bench_remove_insert::<HashMapNZ64<u64>>(size);
+    println!("remove insert {:9} -> {:4.1} - {:4.1} = {:+4.1} ns/op", size, x, y, x - y);
+  }
+
+  for &size in sizes().iter() {
+    let x = bench_get_100pct::<AHashMap<NonZeroU64, u64>>(size);
+    let y = bench_get_100pct::<HashMapNZ64<u64>>(size);
+    println!("get 100% {:9} -> {:4.1} - {:4.1} = {:+4.1} ns/op", size, x, y, x - y);
+  }
+
+  for &size in sizes().iter() {
+    let x = bench_get_50pct::<AHashMap<NonZeroU64, u64>>(size);
+    let y = bench_get_50pct::<HashMapNZ64<u64>>(size);
+    println!("get 50% {:9} -> {:4.1} - {:4.1} = {:+4.1} ns/op", size, x, y, x - y);
+  }
+
   // doit::<HashMap<NonZeroU64, u64>>("HashMap");
-  doit::<AHashMap<NonZeroU64, u64>>("AHashMap");
-  doit::<HashMapNZ64<u64>>("HashMapNZ64");
   // doit::<FxHashMap<NonZeroU64, u64>>("FxHashMap");
   // doit::<IntMap<u64>>("IntMap");
   // doit::<BTreeMap<NonZeroU64, u64>>("BTreeMap");
   // doit::<FakeMap>("FakeMap");
-  //
-  /*
-  fn go2<T: BenchMap>(name: &'static str) {
-    for &size in SIZES {
-      let x = bench_memory::<T>(size);
-      println!("{:11} {:9} -> {:4.1} bytes/item", name, size, x);
-    }
-  }
-  go2::<AHashMap<NonZeroU64, u64>>("AHashMap");
-  go2::<HashMapNZ64<u64>>("HashMapNZ64");
-  */
+  let _ = FakeMap::new();
 }

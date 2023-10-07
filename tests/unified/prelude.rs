@@ -1,6 +1,6 @@
-pub use expect_test::expect;
-pub use wordmap::map::HashMapNZ64;
-pub use wordmap::map;
-pub use std::fmt::Write;
-pub use std::num::NonZeroU64;
-pub use std::writeln;
+pub(crate) use expect_test::expect;
+pub(crate) use wordmap::map::HashMapNZ64;
+pub(crate) use wordmap::map;
+pub(crate) use std::fmt::Write;
+pub(crate) use std::num::NonZeroU64;
+pub(crate) use std::writeln;

@@ -1,6 +1,6 @@
 use crate::prelude::*;
 
-pub trait BenchMap {
+pub(crate) trait BenchMap {
   fn new() -> Self;
   fn get(&self, key: NonZeroU64) -> Option<u64>;
   fn insert(&mut self, key: NonZeroU64, value: u64) -> Option<u64>;
@@ -99,7 +99,7 @@ impl BenchMap for BTreeMap<NonZeroU64, u64> {
   fn remove(&mut self, key: NonZeroU64) -> Option<u64> { self.remove(&key) }
 }
 
-pub struct FakeMap(u64);
+pub(crate) struct FakeMap(u64);
 
 impl BenchMap for FakeMap {
   #[inline]

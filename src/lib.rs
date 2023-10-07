@@ -13,3 +13,16 @@ mod prelude;
 pub mod map;
 pub mod rng;
 pub mod set;
+
+pub fn get(t: &map::HashMapNZ64<u64>, key: core::num::NonZeroU64) -> Option<&u64> {
+  t.get(key)
+}
+
+pub fn insert(t: &mut map::HashMapNZ64<u64>, key: core::num::NonZeroU64, value: u64) -> Option<u64> {
+  t.insert(key, value)
+}
+
+pub fn remove(t: &mut map::HashMapNZ64<u64>, key: core::num::NonZeroU64) -> Option<u64> {
+  t.remove(key)
+}
+
