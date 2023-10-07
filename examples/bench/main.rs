@@ -52,7 +52,7 @@ fn timeit<F, A>(f: F) -> f64 where F: FnOnce() -> A {
 }
 
 fn bench_get_100pct<T: BenchMap>(size: usize) -> f64 {
-  let mut g = Rng::from_hash(42);
+  let mut g = Rng::from_u64(42);
   let mut t = T::new();
   let mut s = Vec::with_capacity(NUM_OPERATIONS);
 
@@ -96,7 +96,7 @@ fn bench_get_100pct<T: BenchMap>(size: usize) -> f64 {
 }
 
 fn bench_get_50pct<T: BenchMap>(size: usize) -> f64 {
-  let mut g = Rng::from_hash(42);
+  let mut g = Rng::from_u64(42);
   let mut t = T::new();
   let mut s = Vec::with_capacity(NUM_OPERATIONS);
 
@@ -141,7 +141,7 @@ fn bench_memory<T: BenchMap>(size: usize) -> f64 {
 }
 
 fn bench_remove_insert<T: BenchMap>(size: usize) -> f64 {
-  let mut g = Rng::from_hash(42);
+  let mut g = Rng::from_u64(42);
   let mut t = T::new();
   let mut a = Vec::from_iter((0 .. size).map(|i| key_seq(i)));
   let mut s = Vec::with_capacity(NUM_OPERATIONS);
