@@ -41,7 +41,7 @@ fn sizes() -> Box<[usize]> {
 
 #[inline]
 fn key_seq(i: usize) -> NonZeroU64 {
-  NonZeroU64::new(((i as u64).rotate_left(KEY_ROTATE_LEFT)) | 1).unwrap()
+  unsafe { NonZeroU64::new_unchecked(((i as u64).rotate_left(KEY_ROTATE_LEFT)) | 1) }
 }
 
 fn timeit<F, A>(f: F) -> f64 where F: FnOnce() -> A {

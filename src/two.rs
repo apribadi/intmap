@@ -75,10 +75,6 @@ impl<T> HashMapNZ64<T> {
   */
 }
 
-pub fn other_contains_key(t: &ahash::AHashSet<NonZeroU64>, k: NonZeroU64) -> bool {
-  t.contains(&k)
-}
-
 /*
 pub fn contains_key(t: &HashMapNZ64<()>, k: NonZeroU64) -> bool {
   t.contains_key(k)
