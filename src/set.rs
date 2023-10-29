@@ -1,9 +1,10 @@
 use crate::prelude::*;
+use crate::map::HashMapNZ64;
 
 pub struct HashSetNZ64(HashMapNZ64<()>);
 
 #[derive(Clone)]
-pub struct Iter<'a>(map::Keys<'a, ()>);
+pub struct Iter<'a>(crate::map::Keys<'a, ()>);
 
 impl<'a> FusedIterator for Iter<'a> {}
 impl<'a> ExactSizeIterator for Iter<'a> {}

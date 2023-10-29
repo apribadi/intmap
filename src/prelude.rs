@@ -15,17 +15,20 @@ pub(crate) use core::ops::Index;
 pub(crate) use core::ops::IndexMut;
 pub(crate) use core::ptr::NonNull;
 pub(crate) use core::ptr;
-pub(crate) use crate::map::HashMapNZ64;
-pub(crate) use crate::map;
 pub(crate) use crate::rng::Rng;
 pub(crate) use crate::rng;
 
 #[inline(always)]
-#[cold]
-pub(crate) const fn cold() {}
+pub(crate) unsafe fn assume(p: bool) {
+  if ! p { unsafe { core::hint::unreachable_unchecked() } }
+}
 
 #[inline(always)]
-pub(crate) const fn expect(p: bool, q: bool) -> bool {
+#[cold]
+pub(crate) fn cold() {}
+
+#[inline(always)]
+pub(crate) fn expect(p: bool, q: bool) -> bool {
   if p != q { cold() }
   p
 }

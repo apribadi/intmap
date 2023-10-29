@@ -24,114 +24,17 @@ struct Slot<T> {
   value: MaybeUninit<T>,
 }
 
-pub struct OccupiedEntry<'a, T: 'a> {
-  map: &'a mut HashMapNZ64<T>,
-  ptr: *mut Slot<T>,
-}
-
-pub struct VacantEntry<'a, T: 'a> {
-  map: &'a mut HashMapNZ64<T>,
-  key: NonZeroU64,
-}
-
-pub enum Entry<'a, T: 'a> {
-  Occupied(OccupiedEntry<'a, T>),
-  Vacant(VacantEntry<'a, T>),
-}
-
-/// Iterator returned by [`HashMapNZ64::iter`].
-
-#[derive(Clone)]
-pub struct Iter<'a, T: 'a> {
-  len: usize,
-  ptr: *const Slot<T>,
-  rev: Mixer,
-  var: PhantomData<&'a T>,
-}
-
-/// Iterator returned by [`HashMapNZ64::iter_mut`].
-
-pub struct IterMut<'a, T: 'a> {
-  len: usize,
-  ptr: *mut Slot<T>,
-  rev: Mixer,
-  var: PhantomData<&'a mut T>,
-}
-
-/// Iterator returned by [`HashMapNZ64::keys`].
-
-#[derive(Clone)]
-pub struct Keys<'a, T: 'a> {
-  len: usize,
-  ptr: *const Slot<T>,
-  rev: Mixer,
-  var: PhantomData<&'a T>,
-}
-
-/// Iterator returned by [`HashMapNZ64::values`].
-
-#[derive(Clone)]
-pub struct Values<'a, T: 'a> {
-  len: usize,
-  ptr: *const Slot<T>,
-  var: PhantomData<&'a T>,
-}
-
-/// Iterator returned by [`HashMapNZ64::values_mut`].
-
-pub struct ValuesMut<'a, T: 'a> {
-  len: usize,
-  ptr: *mut Slot<T>,
-  var: PhantomData<&'a mut T>,
-}
-
-/// Iterator returned by [`HashMapNZ64::into_iter`].
-
-pub struct IntoIter<T> {
-  rev: Mixer,
-  len: usize,
-  ptr: *const Slot<T>, // covariant in `T`
-  mem: (*mut u8, usize),
-}
-
-/// Iterator returned by [`HashMapNZ64::into_values`].
-
-pub struct IntoValues<T> {
-  len: usize,
-  ptr: *const Slot<T>, // covariant in `T`
-  mem: (*mut u8, usize),
-}
-
-impl<'a, T> FusedIterator for Iter<'a, T> {}
-
-impl<'a, T> FusedIterator for IterMut<'a, T> {}
-
-impl<'a, T> FusedIterator for Keys<'a, T> {}
-
-impl<'a, T> FusedIterator for Values<'a, T> {}
-
-impl<'a, T> FusedIterator for ValuesMut<'a, T> {}
-
-impl<'a, T> ExactSizeIterator for Iter<'a, T> {}
-
-impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
-
-impl<'a, T> ExactSizeIterator for Keys<'a, T> {}
-
-impl<'a, T> ExactSizeIterator for Values<'a, T> {}
-
-impl<'a, T> ExactSizeIterator for ValuesMut<'a, T> {}
-
-const INITIAL_S: usize = 60;
-const INITIAL_C: isize = 1 << (64 - INITIAL_S - 1);
-const INITIAL_D: usize = 1 << (64 - INITIAL_S);
-const INITIAL_E: usize = 8;
-const INITIAL_N: usize = INITIAL_D + INITIAL_E;
-const INITIAL_R: isize = INITIAL_C;
+const INITIAL_S: usize = 60;                        // shift
+const INITIAL_C: isize = 1 << (64 - INITIAL_S - 1); // capacity
+const INITIAL_D: usize = 1 << (64 - INITIAL_S);     // ?
+const INITIAL_E: usize = 8;                         // extra slots
+const INITIAL_N: usize = INITIAL_D + INITIAL_E;     // table length, total
+const INITIAL_R: isize = INITIAL_C;                 // remaining capacity
 
 #[inline(always)]
-const unsafe fn spot(shift: usize, h: u64) -> isize {
-  (h >> (shift & 63)) as isize
+unsafe fn spot(shift: usize, h: u64) -> isize {
+  unsafe { assume(shift <= 63) };
+  (h >> shift) as isize
 }
 
 #[inline(always)]
@@ -152,7 +55,7 @@ const fn invert(a: u64) -> u64 {
 
 impl Mixer {
   #[inline(always)]
-  const fn new(m: u64) -> Self {
+  fn new(m: u64) -> Self {
     let a = m | 1;
     let b = invert(a);
     Self(a, b)
@@ -806,6 +709,104 @@ impl<T> IndexMut<NonZeroU64> for HashMapNZ64<T> {
   }
 }
 
+pub struct OccupiedEntry<'a, T: 'a> {
+  map: &'a mut HashMapNZ64<T>,
+  ptr: *mut Slot<T>,
+}
+
+pub struct VacantEntry<'a, T: 'a> {
+  map: &'a mut HashMapNZ64<T>,
+  key: NonZeroU64,
+}
+
+pub enum Entry<'a, T: 'a> {
+  Occupied(OccupiedEntry<'a, T>),
+  Vacant(VacantEntry<'a, T>),
+}
+
+/// Iterator returned by [`HashMapNZ64::iter`].
+
+#[derive(Clone)]
+pub struct Iter<'a, T: 'a> {
+  len: usize,
+  ptr: *const Slot<T>,
+  rev: Mixer,
+  var: PhantomData<&'a T>,
+}
+
+/// Iterator returned by [`HashMapNZ64::iter_mut`].
+
+pub struct IterMut<'a, T: 'a> {
+  len: usize,
+  ptr: *mut Slot<T>,
+  rev: Mixer,
+  var: PhantomData<&'a mut T>,
+}
+
+/// Iterator returned by [`HashMapNZ64::keys`].
+
+#[derive(Clone)]
+pub struct Keys<'a, T: 'a> {
+  len: usize,
+  ptr: *const Slot<T>,
+  rev: Mixer,
+  var: PhantomData<&'a T>,
+}
+
+/// Iterator returned by [`HashMapNZ64::values`].
+
+#[derive(Clone)]
+pub struct Values<'a, T: 'a> {
+  len: usize,
+  ptr: *const Slot<T>,
+  var: PhantomData<&'a T>,
+}
+
+/// Iterator returned by [`HashMapNZ64::values_mut`].
+
+pub struct ValuesMut<'a, T: 'a> {
+  len: usize,
+  ptr: *mut Slot<T>,
+  var: PhantomData<&'a mut T>,
+}
+
+/// Iterator returned by [`HashMapNZ64::into_iter`].
+
+pub struct IntoIter<T> {
+  rev: Mixer,
+  len: usize,
+  ptr: *const Slot<T>, // covariant in `T`
+  mem: (*mut u8, usize),
+}
+
+/// Iterator returned by [`HashMapNZ64::into_values`].
+
+pub struct IntoValues<T> {
+  len: usize,
+  ptr: *const Slot<T>, // covariant in `T`
+  mem: (*mut u8, usize),
+}
+
+impl<'a, T> FusedIterator for Iter<'a, T> {}
+
+impl<'a, T> FusedIterator for IterMut<'a, T> {}
+
+impl<'a, T> FusedIterator for Keys<'a, T> {}
+
+impl<'a, T> FusedIterator for Values<'a, T> {}
+
+impl<'a, T> FusedIterator for ValuesMut<'a, T> {}
+
+impl<'a, T> ExactSizeIterator for Iter<'a, T> {}
+
+impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
+
+impl<'a, T> ExactSizeIterator for Keys<'a, T> {}
+
+impl<'a, T> ExactSizeIterator for Values<'a, T> {}
+
+impl<'a, T> ExactSizeIterator for ValuesMut<'a, T> {}
+
 impl<T> IntoIterator for HashMapNZ64<T> {
   type Item = (NonZeroU64, T);
 
@@ -896,6 +897,7 @@ impl<'a, T> OccupiedEntry<'a, T> {
     v
   }
 }
+
 
 impl<'a, T> VacantEntry<'a, T> {
   pub fn insert(self, value: T) -> &'a mut T {
