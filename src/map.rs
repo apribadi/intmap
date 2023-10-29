@@ -26,7 +26,7 @@ struct Slot<T> {
 
 const INITIAL_S: usize = 60;                        // shift
 const INITIAL_C: isize = 1 << (64 - INITIAL_S - 1); // capacity
-const INITIAL_D: usize = 1 << (64 - INITIAL_S);     // table length, primary
+const INITIAL_D: usize = 1 << (64 - INITIAL_S);     // ?
 const INITIAL_E: usize = 8;                         // extra slots
 const INITIAL_N: usize = INITIAL_D + INITIAL_E;     // table length, total
 const INITIAL_R: isize = INITIAL_C;                 // remaining capacity
@@ -74,25 +74,18 @@ impl Mixer {
 }
 
 impl<T> HashMapNZ64<T> {
-  const EMPTY: [Slot<T>; 10] = [
-    Slot { hash: 0, value: MaybeUninit::uninit() },
-    Slot { hash: 0, value: MaybeUninit::uninit() },
-    Slot { hash: 0, value: MaybeUninit::uninit() },
-    Slot { hash: 0, value: MaybeUninit::uninit() },
-    Slot { hash: 0, value: MaybeUninit::uninit() },
-    Slot { hash: 0, value: MaybeUninit::uninit() },
-    Slot { hash: 0, value: MaybeUninit::uninit() },
-    Slot { hash: 0, value: MaybeUninit::uninit() },
-    Slot { hash: 0, value: MaybeUninit::uninit() },
-    Slot { hash: 0, value: MaybeUninit::uninit() },
-  ];
-
   /// Creates an empty map, seeding the hash mixer from a thread-local random
   /// number generator.
 
   #[inline(always)]
   pub fn new() -> Self {
-    rng::thread_local::with(|rng| Self::new_seeded(rng))
+    Self {
+      mixer: Mixer::new(rng::thread_local::with(|rng| rng.u64())),
+      table: ptr::null(),
+      shift: INITIAL_S,
+      space: INITIAL_R,
+      check: ptr::null(),
+    }
   }
 
   /// Creates an empty map, seeding the hash mixer from the given random number
@@ -100,14 +93,12 @@ impl<T> HashMapNZ64<T> {
 
   #[inline(always)]
   pub fn new_seeded(rng: &mut Rng) -> Self {
-    let t = &Self::EMPTY as *const Slot<T>;
-
     Self {
       mixer: Mixer::new(rng.u64()),
-      table: t.wrapping_add(1),
-      shift: 63,
-      space: 1,
-      check: t.wrapping_add(9),
+      table: ptr::null(),
+      shift: INITIAL_S,
+      space: INITIAL_R,
+      check: ptr::null(),
     }
   }
 
@@ -134,6 +125,9 @@ impl<T> HashMapNZ64<T> {
   #[inline(always)]
   pub fn contains_key(&self, key: NonZeroU64) -> bool {
     let t = self.table;
+
+    if t.is_null() { return false; }
+
     let m = self.mixer;
     let s = self.shift;
     let h = u64::from(m.hash(key));
@@ -155,6 +149,9 @@ impl<T> HashMapNZ64<T> {
   #[inline(always)]
   pub fn get(&self, key: NonZeroU64) -> Option<&T> {
     let t = self.table;
+
+    if t.is_null() { return None; }
+
     let m = self.mixer;
     let s = self.shift;
     let h = u64::from(m.hash(key));
@@ -178,6 +175,9 @@ impl<T> HashMapNZ64<T> {
   #[inline(always)]
   pub fn get_mut(&mut self, key: NonZeroU64) -> Option<&mut T> {
     let t = self.table as *mut Slot<T>;
+
+    if t.is_null() { return None; }
+
     let m = self.mixer;
     let s = self.shift;
     let h = u64::from(m.hash(key));
@@ -208,7 +208,7 @@ impl<T> HashMapNZ64<T> {
     if a.is_null() { match alloc::alloc::handle_alloc_error(layout) {} }
 
     let t = unsafe { a.add(INITIAL_D - 1) };
-    let z = unsafe { a.add(INITIAL_N - 1) };
+    let b = unsafe { a.add(INITIAL_N - 1) };
 
     let m = self.mixer;
     let h = u64::from(m.hash(key));
@@ -222,7 +222,7 @@ impl<T> HashMapNZ64<T> {
     self.table = t;
     self.shift = INITIAL_S;
     self.space = INITIAL_R - 1;
-    self.check = z;
+    self.check = b;
   }
 
   #[inline(never)]
@@ -231,11 +231,11 @@ impl<T> HashMapNZ64<T> {
     let old_t = self.table as *mut Slot<T>;
     let old_s = self.shift;
     let old_r = self.space;
-    let old_z = self.check as *mut Slot<T>;
+    let old_b = self.check as *mut Slot<T>;
 
-    let old_z_hash = unsafe { &*old_z }.hash;
+    let old_b_hash = unsafe { &*old_b }.hash;
     let is_overfull = old_r < 0;
-    let is_overflow = old_z_hash != 0;
+    let is_overflow = old_b_hash != 0;
 
     // WARNING!
     //
@@ -251,13 +251,13 @@ impl<T> HashMapNZ64<T> {
     // This is an instance of the infamous PPYP design pattern.
 
     if is_overflow {
-      unsafe { &mut *old_z }.hash = 0;
+      unsafe { &mut *old_b }.hash = 0;
       self.space = old_r + 1;
     }
 
     let old_c = 1 << (64 - old_s - 1);
     let old_d = 1 << (64 - old_s);
-    let old_e = unsafe { old_z.offset_from(old_t) } as usize;
+    let old_e = unsafe { old_b.offset_from(old_t) } as usize;
     let old_n = old_d + old_e;
     let old_a = unsafe { old_t.sub(old_d - 1) };
     let old_u = 64 - old_s;
@@ -292,17 +292,17 @@ impl<T> HashMapNZ64<T> {
     // undo our earlier `if is_overflow { ... }` block.
 
     if is_overflow {
-      unsafe { &mut *old_z }.hash = old_z_hash;
+      unsafe { &mut *old_b }.hash = old_b_hash;
       self.space = old_r;
     }
 
     let new_t = unsafe { new_a.add(new_d - 1) };
-    let new_z = unsafe { new_a.add(new_n - 1) };
+    let new_b = unsafe { new_a.add(new_n - 1) };
 
     let mut p = old_a;
     let mut q = new_a;
 
-    while p <= old_z {
+    while p <= old_b {
       let x = unsafe { &*p }.hash;
 
       if x != 0 {
@@ -318,7 +318,7 @@ impl<T> HashMapNZ64<T> {
     self.table = new_t;
     self.shift = new_s;
     self.space = new_r;
-    self.check = new_z;
+    self.check = new_b;
 
     // The map is now in a valid state, even if `dealloc` panics.
 
@@ -336,17 +336,15 @@ impl<T> HashMapNZ64<T> {
 
   #[inline(always)]
   pub fn insert(&mut self, key: NonZeroU64, value: T) -> Option<T> {
-    let s = self.shift;
+    let t = self.table as *mut Slot<T>;
 
-    if s == 63 {
+    if t.is_null() {
       unsafe { self.internal_init_table_and_insert(key, value) };
       return None;
     }
 
-    let t = self.table as *mut Slot<T>;
-    let z = self.check as *mut Slot<T>;
     let m = self.mixer;
-
+    let s = self.shift;
     let h = u64::from(m.hash(key));
 
     let mut p = unsafe { t.offset(- spot(s, h)) };
@@ -376,8 +374,9 @@ impl<T> HashMapNZ64<T> {
 
     let r = self.space - 1;
     self.space = r;
+    let b = self.check as *mut Slot<T>;
 
-    if r < 0 || p == z { unsafe { self.internal_grow_table() }; }
+    if r < 0 || p == b { unsafe { self.internal_grow_table() }; }
 
     None
   }
@@ -388,6 +387,9 @@ impl<T> HashMapNZ64<T> {
   #[inline(always)]
   pub fn remove(&mut self, key: NonZeroU64) -> Option<T> {
     let t = self.table as *mut Slot<T>;
+
+    if t.is_null() { return None; }
+
     let m = self.mixer;
     let s = self.shift;
     let h = u64::from(m.hash(key));
@@ -425,6 +427,9 @@ impl<T> HashMapNZ64<T> {
   #[inline(always)]
   pub fn entry(&mut self, key: NonZeroU64) -> Entry<'_, T> {
     let t = self.table as *mut Slot<T>;
+
+    if t.is_null() { return Entry::Vacant(VacantEntry { map: self, key }); }
+
     let m = self.mixer;
     let s = self.shift;
     let h = u64::from(m.hash(key));
@@ -447,13 +452,13 @@ impl<T> HashMapNZ64<T> {
   /// Removes every item from the map. Retains heap-allocated memory.
 
   pub fn clear(&mut self) {
-    let s = self.shift;
-
-    if s == 63 { return; }
-
     let t = self.table as *mut Slot<T>;
-    let z = self.check as *mut Slot<T>;
+
+    if t.is_null() { return; }
+
+    let s = self.shift;
     let r = self.space;
+    let b = self.check as *mut Slot<T>;
     let c = 1 << (64 - s - 1);
     let d = 1 << (64 - s);
     let a = unsafe { t.sub(d - 1) };
@@ -472,7 +477,7 @@ impl<T> HashMapNZ64<T> {
       //
       // Also, we update `self.space` as we go instead of once at the end.
 
-      let mut p = z;
+      let mut p = b;
       let mut k = k;
       let mut r = r;
 
@@ -491,7 +496,7 @@ impl<T> HashMapNZ64<T> {
     } else {
       let mut p = a;
 
-      while p <= z {
+      while p <= b {
         unsafe { &mut *p }.hash = 0;
         p = unsafe { p.add(1) };
       }
@@ -503,14 +508,14 @@ impl<T> HashMapNZ64<T> {
   /// Removes every item from the map. Releases heap-allocated memory.
 
   pub fn reset(&mut self) {
-    let s = self.shift;
-
-    if s == 63 { return; }
-
     let t = self.table as *mut Slot<T>;
-    let z = self.check as *mut Slot<T>;
+
+    if t.is_null() { return; }
+
+    let s = self.shift;
+    let b = self.check as *mut Slot<T>;
     let d = 1 << (64 - s);
-    let e = unsafe { z.offset_from(t) } as usize;
+    let e = unsafe { b.offset_from(t) } as usize;
     let n = d + e;
     let a = unsafe { t.sub(d - 1) };
 
@@ -530,7 +535,7 @@ impl<T> HashMapNZ64<T> {
 
       let mut p = a;
 
-      while p <= z {
+      while p <= b {
         if unsafe { &mut *p }.hash != 0 {
           unsafe { (&mut *p).value.assume_init_drop() };
         }
@@ -552,11 +557,11 @@ impl<T> HashMapNZ64<T> {
     let m = self.mixer;
     let s = self.shift;
     let r = self.space;
-    let z = self.check;
+    let b = self.check;
     let c = 1 << (64 - s - 1);
     let k = (c - r) as usize;
 
-    Iter { len: k, ptr: z, rev: m, var: PhantomData }
+    Iter { len: k, ptr: b, rev: m, var: PhantomData }
   }
 
   /// Returns an iterator yielding each key and a mutable reference to its
@@ -566,11 +571,11 @@ impl<T> HashMapNZ64<T> {
     let m = self.mixer;
     let s = self.shift;
     let r = self.space;
-    let z = self.check as *mut Slot<T>;
+    let b = self.check as *mut Slot<T>;
     let c = 1 << (64 - s - 1);
     let k = (c - r) as usize;
 
-    IterMut { len: k, ptr: z, rev: m, var: PhantomData }
+    IterMut { len: k, ptr: b, rev: m, var: PhantomData }
   }
 
   /// Returns an iterator yielding each key. The iterator item type is
@@ -580,11 +585,11 @@ impl<T> HashMapNZ64<T> {
     let m = self.mixer;
     let s = self.shift;
     let r = self.space;
-    let z = self.check;
+    let b = self.check;
     let c = 1 << (64 - s - 1);
     let k = (c - r) as usize;
 
-    Keys { len: k, ptr: z, rev: m, var: PhantomData }
+    Keys { len: k, ptr: b, rev: m, var: PhantomData }
   }
 
   /// Returns an iterator yielding a reference to each value. The iterator item
@@ -593,11 +598,11 @@ impl<T> HashMapNZ64<T> {
   pub fn values(&self) -> Values<'_, T> {
     let s = self.shift;
     let r = self.space;
-    let z = self.check;
+    let b = self.check;
     let c = 1 << (64 - s - 1);
     let k = (c - r) as usize;
 
-    Values { len: k, ptr: z, var: PhantomData }
+    Values { len: k, ptr: b, var: PhantomData }
   }
 
   /// Returns an iterator yielding a mutable reference to each value. The
@@ -606,11 +611,11 @@ impl<T> HashMapNZ64<T> {
   pub fn values_mut(&mut self) -> ValuesMut<'_, T> {
     let s = self.shift;
     let r = self.space;
-    let z = self.check as *mut Slot<T>;
+    let b = self.check as *mut Slot<T>;
     let c = 1 << (64 - s - 1);
     let k = (c - r) as usize;
 
-    ValuesMut { len: k, ptr: z, var: PhantomData }
+    ValuesMut { len: k, ptr: b, var: PhantomData }
   }
 
   /// Returns an iterator yielding each value and consuming the map. The
@@ -618,33 +623,32 @@ impl<T> HashMapNZ64<T> {
 
   pub fn into_values(self) -> IntoValues<T> {
     let o = ManuallyDrop::new(self);
-    let s = o.shift;
-
-    if s == 63 { return IntoValues { len: 0, ptr: ptr::null(), mem: (ptr::null_mut(), 0) }; }
-
     let t = o.table;
-    let z = o.check;
+
+    if t.is_null() { return IntoValues { len: 0, ptr: ptr::null(), mem: (ptr::null_mut(), 0) }; }
+
+    let s = o.shift;
     let r = o.space;
+    let b = o.check;
     let c = 1 << (64 - s - 1);
     let d = 1 << (64 - s);
-    let e = unsafe { z.offset_from(t) } as usize;
+    let e = unsafe { b.offset_from(t) } as usize;
     let n = d + e;
     let k = (c - r) as usize;
     let a = unsafe { t.sub(d - 1) } as *mut u8;
 
-    IntoValues { len: k, ptr: z, mem: (a, n * mem::size_of::<Slot<T>>()) }
+    IntoValues { len: k, ptr: b, mem: (a, n * mem::size_of::<Slot<T>>()) }
   }
 
   fn internal_num_slots(&self) -> usize {
-    let s = self.shift;
-
-    if s == 63 { return 0; }
-
     let t = self.table;
-    let z = self.check;
-    let z = self.check;
+
+    if t.is_null() { return 0; }
+
+    let s = self.shift;
+    let b = self.check;
     let d = 1 << (64 - s);
-    let e = unsafe { z.offset_from(t) } as usize;
+    let e = unsafe { b.offset_from(t) } as usize;
     let n = d + e;
     n
   }
@@ -663,14 +667,14 @@ impl<T> HashMapNZ64<T> {
   }
 
   fn internal_allocation_info(&self) -> Option<(NonNull<u8>, Layout)> {
-    let s = self.shift;
-
-    if s == 63 { return None; }
-
     let t = self.table;
-    let z = self.check;
+
+    if t.is_null() { return None; }
+
+    let s = self.shift;
+    let b = self.check;
     let d = 1 << (64 - s);
-    let e = unsafe { z.offset_from(t) } as usize;
+    let e = unsafe { b.offset_from(t) } as usize;
     let n = d + e;
     let a = unsafe { t.sub(d - 1) };
 
@@ -684,8 +688,7 @@ impl<T> HashMapNZ64<T> {
 
 impl<T> Drop for HashMapNZ64<T> {
   fn drop(&mut self) {
-    let _ = self;
-    // self.reset()
+    self.reset()
   }
 }
 
@@ -810,22 +813,22 @@ impl<T> IntoIterator for HashMapNZ64<T> {
 
   fn into_iter(self) -> IntoIter<T> {
     let o = ManuallyDrop::new(self);
-    let s = o.shift;
     let m = o.mixer;
-
-    if s == 63 { return IntoIter { rev: m, len: 0, ptr: ptr::null(), mem: (ptr::null_mut(), 0) }; }
-
     let t = o.table;
-    let z = o.check;
+
+    if t.is_null() { return IntoIter { rev: m, len: 0, ptr: ptr::null(), mem: (ptr::null_mut(), 0) }; }
+
+    let s = o.shift;
     let r = o.space;
+    let b = o.check;
     let c = 1 << (64 - s - 1);
     let d = 1 << (64 - s);
-    let e = unsafe { z.offset_from(t) } as usize;
+    let e = unsafe { b.offset_from(t) } as usize;
     let n = d + e;
     let k = (c - r) as usize;
     let a = unsafe { t.sub(d - 1) } as *mut u8;
 
-    IntoIter { rev: m, len: k, ptr: z, mem: (a, n * mem::size_of::<Slot<T>>()) }
+    IntoIter { rev: m, len: k, ptr: b, mem: (a, n * mem::size_of::<Slot<T>>()) }
   }
 }
 
