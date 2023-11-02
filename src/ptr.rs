@@ -26,14 +26,16 @@ impl Ptr {
 
   #[inline(always)]
   pub const fn invalid(addr: usize) -> Self {
-    // TODO: Support platforms where a pointer is larger than an address.
     Self(unsafe { core::mem::transmute::<usize, *const u8>(addr) })
   }
 
   #[inline(always)]
   pub fn addr(self) -> usize {
-    // NB: not a `const` function
-    // TODO: Support platforms where a pointer is larger than an address.
+    // NB: This must not be a `const` function.
+    //
+    // In particular, transmuting a pointer into an integer is undefined
+    // behavior in a const context.
+
     unsafe { core::mem::transmute::<*const u8, usize>(self.0) }
   }
 
@@ -199,7 +201,12 @@ impl Ptr {
   }
 
   #[inline(always)]
-  pub fn as_non_null<T>(self) -> Option<core::ptr::NonNull<T>> {
+  pub const unsafe fn as_non_null<T>(self) -> core::ptr::NonNull<T> {
+    unsafe { core::ptr::NonNull::new_unchecked(self.as_mut_ptr()) }
+  }
+
+  #[inline(always)]
+  pub unsafe fn as_option_non_null<T>(self) -> Option<core::ptr::NonNull<T>> {
     core::ptr::NonNull::new(self.as_mut_ptr())
   }
 }

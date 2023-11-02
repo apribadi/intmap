@@ -2,11 +2,6 @@ use core::mem::MaybeUninit;
 use core::num::NonZeroU64;
 use crate::ptr::Ptr;
 
-#[inline(always)]
-unsafe fn assume(p: bool) {
-  if ! p { unsafe { core::hint::unreachable_unchecked() } }
-}
-
 #[derive(Clone, Copy)]
 struct Seeds(u64, u64);
 
@@ -24,7 +19,21 @@ pub struct HashMapNZ64<T> {
   table: Ptr,
   shift: usize,
   space: isize,
-  _mark: core::marker::PhantomData<T>,
+  __var: core::marker::PhantomData<T>,
+}
+
+// NB: We need `repr(C)` so that we're guaranteed that the hash is at the front
+// of the struct.
+
+#[repr(C)]
+struct Slot<T> {
+  hash: u64,
+  data: MaybeUninit<T>,
+}
+
+#[inline(always)]
+fn spot(h: u64, s: usize) -> isize {
+  (h >> 1).wrapping_shr(s as u32) as isize
 }
 
 impl<T> HashMapNZ64<T> {
@@ -33,60 +42,66 @@ impl<T> HashMapNZ64<T> {
     let h = hash(m, key).get();
     let t = self.table;
     let s = self.shift;
-    unsafe { assume(s <= 63) };
-    let mut i = (! h >> s) as isize;
+    let i = spot(h, s);
+
+    let mut p = t.gep::<Slot<T>>(- i);
     let mut x;
 
     loop {
-      x = unsafe { t.gep::<u64>(i).read::<u64>() };
+      x = unsafe { p.read::<u64>() };
       if x <= h { break; }
-      i = i + 1;
+      p = p.gep::<Slot<T>>(1);
     }
 
     if x != h {
       return None;
     }
 
-    Some(unsafe { t.gep::<T>(- i - 1).as_ref() })
+    Some(unsafe { p.as_ref::<Slot<T>>().data.assume_init_ref() })
   }
 
-  /*
   pub fn contains_key(&self, key: NonZeroU64) -> bool {
-    let a = self.a;
-    let b = self.b;
-    let h = key.get();
-    let h = h.wrapping_mul(a);
-    let h = h.swap_bytes();
-    let h = h.wrapping_mul(b);
-    let s = self.s;
-    let t = self.t;
-    unsafe { assume(s <= 63) };
-    let mut i = (h >> s) as usize;
+    let m = self.seeds;
+    let h = hash(m, key).get();
+    let t = self.table;
+    let s = self.shift;
+    let i = spot(h, s);
+
+    let mut p = t.gep::<Slot<T>>(- i);
     let mut x;
 
     loop {
-      x = unsafe { t.cast::<u64>().add(i).read() };
-      i = i + 1;
-      if x >= h { break; }
+      x = unsafe { p.read::<u64>() };
+      if x <= h { break; }
+      p = p.gep::<Slot<T>>(1);
     }
 
     x == h
   }
-  */
 }
 
 /*
-pub fn contains_key(t: &HashMapNZ64<()>, k: NonZeroU64) -> bool {
+pub fn contains_key(t: &HashMapNZ64<u64>, k: NonZeroU64) -> bool {
   t.contains_key(k)
 }
 */
 
-pub fn get(t: &HashMapNZ64<u32>, k: NonZeroU64) -> Option<&u32> {
+pub fn contains_key2(t: &HashMapNZ64<u64>, k: NonZeroU64) -> bool {
+  t.get(k).is_some()
+}
+
+pub fn get(t: &HashMapNZ64<u64>, k: NonZeroU64) -> Option<&u64> {
   t.get(k)
 }
 
-/*
-pub fn twice(t: &HashMapNZ64<u32>, x: NonZeroU64, y: NonZeroU64) -> u32 {
+pub fn get_value(t: &HashMapNZ64<u64>, k: NonZeroU64) -> Option<u64> {
+  match t.get(k) {
+    None => { None }
+    Some(&r) => { Some(r) }
+  }
+}
+
+pub fn twice(t: &HashMapNZ64<u64>, x: NonZeroU64, y: NonZeroU64) -> u64 {
   match t.get(x) {
     None => { 0 }
     Some(&a) => {
@@ -97,4 +112,3 @@ pub fn twice(t: &HashMapNZ64<u32>, x: NonZeroU64, y: NonZeroU64) -> u32 {
     }
   }
 }
-*/
