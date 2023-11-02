@@ -5,7 +5,7 @@ use crate::prelude::*;
 /// A fast hash map keyed by `NonZeroU64`s.
 
 pub struct HashMapNZ64<T> {
-  mixer: Mixer,
+  seeds: Seeds,
   table: *const Slot<T>, // covariant in `T`
   shift: usize,
   space: isize,
@@ -17,13 +17,15 @@ unsafe impl<T: Send> Send for HashMapNZ64<T> {}
 unsafe impl<T: Sync> Sync for HashMapNZ64<T> {}
 
 #[derive(Clone, Copy)]
-struct Mixer(u64, u64);
+struct Seeds(u64, u64);
 
 #[repr(C)]
 struct Slot<T> {
   hash: u64,
   data: MaybeUninit<T>,
 }
+
+static ZERO: u64 = 0;
 
 const INITIAL_S: usize = 60;                        // shift
 const INITIAL_C: isize = 1 << (64 - INITIAL_S - 1); // capacity
@@ -48,22 +50,13 @@ fn invert(a: u64) -> u64 {
   x
 }
 
-impl Mixer {
-  #[inline(always)]
-  fn new(m: u64) -> Self {
-    let a = m | 1;
-    let b = invert(a);
-    Self(a, b)
-  }
-}
-
 #[inline(always)]
 fn spot(shift: usize, h: u64) -> isize {
   h.wrapping_shr(shift as u32) as isize
 }
 
 #[inline(always)]
-fn hash(Mixer(a, b): Mixer, x: NonZeroU64) -> NonZeroU64 {
+fn hash(Seeds(a, b): Seeds, x: NonZeroU64) -> NonZeroU64 {
   let x = x.get();
   let x = x.wrapping_mul(a);
   let x = x.swap_bytes();
@@ -72,27 +65,24 @@ fn hash(Mixer(a, b): Mixer, x: NonZeroU64) -> NonZeroU64 {
 }
 
 impl<T> HashMapNZ64<T> {
-  /// Creates an empty map, seeding the hash mixer from a thread-local random
-  /// number generator.
+  /// Creates an empty map, seeding the hash function from a thread-local
+  /// random number generator.
 
   #[inline(always)]
   pub fn new() -> Self {
-    Self {
-      mixer: Mixer::new(rng::thread_local::with(|rng| rng.u64())),
-      table: ptr::null(),
-      shift: INITIAL_S,
-      space: INITIAL_R,
-      check: ptr::null(),
-    }
+    rng::thread_local::with(|rng| Self::new_seeded(rng))
   }
 
-  /// Creates an empty map, seeding the hash mixer from the given random number
-  /// generator.
+  /// Creates an empty map, seeding the hash function from the given random
+  /// number generator.
 
   #[inline(always)]
   pub fn new_seeded(rng: &mut Rng) -> Self {
+    let a = rng.u64() | 1;
+    let b = invert(a);
+
     Self {
-      mixer: Mixer::new(rng.u64()),
+      seeds: Seeds(a, b),
       table: ptr::null(),
       shift: INITIAL_S,
       space: INITIAL_R,
@@ -126,7 +116,7 @@ impl<T> HashMapNZ64<T> {
 
     if t.is_null() { return false; }
 
-    let m = self.mixer;
+    let m = self.seeds;
     let s = self.shift;
     let h = hash(m, key).get();
 
@@ -150,7 +140,7 @@ impl<T> HashMapNZ64<T> {
 
     if t.is_null() { return None; }
 
-    let m = self.mixer;
+    let m = self.seeds;
     let s = self.shift;
     let h = hash(m, key).get();
 
@@ -176,7 +166,7 @@ impl<T> HashMapNZ64<T> {
 
     if t.is_null() { return None; }
 
-    let m = self.mixer;
+    let m = self.seeds;
     let s = self.shift;
     let h = hash(m, key).get();
 
@@ -208,7 +198,7 @@ impl<T> HashMapNZ64<T> {
     let t = unsafe { a.add(INITIAL_D - 1) };
     let b = unsafe { a.add(INITIAL_N - 1) };
 
-    let m = self.mixer;
+    let m = self.seeds;
     let h = hash(m, key).get();
     let p = unsafe { t.offset(- spot(INITIAL_S, h)) };
 
@@ -341,7 +331,7 @@ impl<T> HashMapNZ64<T> {
       return None;
     }
 
-    let m = self.mixer;
+    let m = self.seeds;
     let s = self.shift;
     let h = hash(m, key).get();
 
@@ -388,7 +378,7 @@ impl<T> HashMapNZ64<T> {
 
     if t.is_null() { return None; }
 
-    let m = self.mixer;
+    let m = self.seeds;
     let s = self.shift;
     let h = hash(m, key).get();
 
@@ -428,7 +418,7 @@ impl<T> HashMapNZ64<T> {
 
     if t.is_null() { return Entry::Vacant(VacantEntry { map: self, key }); }
 
-    let m = self.mixer;
+    let m = self.seeds;
     let s = self.shift;
     let h = hash(m, key).get();
 
@@ -552,7 +542,7 @@ impl<T> HashMapNZ64<T> {
   /// value. The iterator item type is `(NonZeroU64, &'_ T)`.
 
   pub fn iter(&self) -> Iter<'_, T> {
-    let m = self.mixer;
+    let m = self.seeds;
     let s = self.shift;
     let r = self.space;
     let b = self.check;
@@ -566,7 +556,7 @@ impl<T> HashMapNZ64<T> {
   /// associated value. The iterator item type is `(NonZeroU64, &'_ mut T)`.
 
   pub fn iter_mut(&mut self) -> IterMut<'_, T> {
-    let m = self.mixer;
+    let m = self.seeds;
     let s = self.shift;
     let r = self.space;
     let b = self.check as *mut Slot<T>;
@@ -580,7 +570,7 @@ impl<T> HashMapNZ64<T> {
   /// `NonZeroU64`.
 
   pub fn keys(&self) -> Keys<'_, T> {
-    let m = self.mixer;
+    let m = self.seeds;
     let s = self.shift;
     let r = self.space;
     let b = self.check;
@@ -727,7 +717,7 @@ pub enum Entry<'a, T: 'a> {
 pub struct Iter<'a, T: 'a> {
   len: usize,
   ptr: *const Slot<T>,
-  rev: Mixer,
+  rev: Seeds,
   var: PhantomData<&'a T>,
 }
 
@@ -736,7 +726,7 @@ pub struct Iter<'a, T: 'a> {
 pub struct IterMut<'a, T: 'a> {
   len: usize,
   ptr: *mut Slot<T>,
-  rev: Mixer,
+  rev: Seeds,
   var: PhantomData<&'a mut T>,
 }
 
@@ -746,7 +736,7 @@ pub struct IterMut<'a, T: 'a> {
 pub struct Keys<'a, T: 'a> {
   len: usize,
   ptr: *const Slot<T>,
-  rev: Mixer,
+  rev: Seeds,
   var: PhantomData<&'a T>,
 }
 
@@ -770,7 +760,7 @@ pub struct ValuesMut<'a, T: 'a> {
 /// Iterator returned by [`HashMapNZ64::into_iter`].
 
 pub struct IntoIter<T> {
-  rev: Mixer,
+  rev: Seeds,
   len: usize,
   ptr: *const Slot<T>, // covariant in `T`
   mem: (*mut u8, usize),
@@ -811,7 +801,7 @@ impl<T> IntoIterator for HashMapNZ64<T> {
 
   fn into_iter(self) -> IntoIter<T> {
     let o = ManuallyDrop::new(self);
-    let m = o.mixer;
+    let m = o.seeds;
     let t = o.table;
 
     if t.is_null() { return IntoIter { rev: m, len: 0, ptr: ptr::null(), mem: (ptr::null_mut(), 0) }; }
