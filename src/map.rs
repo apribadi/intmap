@@ -19,9 +19,10 @@ unsafe impl<T: Sync> Sync for HashMapNZ64<T> {}
 #[derive(Clone, Copy)]
 struct Mixer(u64, u64);
 
+#[repr(C)]
 struct Slot<T> {
   hash: u64,
-  value: MaybeUninit<T>,
+  data: MaybeUninit<T>,
 }
 
 const INITIAL_S: usize = 60;                        // shift
@@ -32,13 +33,7 @@ const INITIAL_N: usize = INITIAL_D + INITIAL_E;     // table length, total
 const INITIAL_R: isize = INITIAL_C;                 // remaining capacity
 
 #[inline(always)]
-unsafe fn spot(shift: usize, h: u64) -> isize {
-  unsafe { assume(shift <= 63) };
-  (h >> shift) as isize
-}
-
-#[inline(always)]
-const fn invert(a: u64) -> u64 {
+fn invert(a: u64) -> u64 {
   // https://arxiv.org/abs/2204.04342
 
   let x = a.wrapping_mul(3) ^ 2;
@@ -60,17 +55,20 @@ impl Mixer {
     let b = invert(a);
     Self(a, b)
   }
+}
 
-  #[inline(always)]
-  const fn hash(self, x: NonZeroU64) -> NonZeroU64 {
-    let a = self.0;
-    let b = self.1;
-    let x = x.get();
-    let x = x.wrapping_mul(a);
-    let x = x.swap_bytes();
-    let x = x.wrapping_mul(b);
-    unsafe { NonZeroU64::new_unchecked(x) }
-  }
+#[inline(always)]
+fn spot(shift: usize, h: u64) -> isize {
+  h.wrapping_shr(shift as u32) as isize
+}
+
+#[inline(always)]
+fn hash(Mixer(a, b): Mixer, x: NonZeroU64) -> NonZeroU64 {
+  let x = x.get();
+  let x = x.wrapping_mul(a);
+  let x = x.swap_bytes();
+  let x = x.wrapping_mul(b);
+  unsafe { NonZeroU64::new_unchecked(x) }
 }
 
 impl<T> HashMapNZ64<T> {
@@ -130,7 +128,7 @@ impl<T> HashMapNZ64<T> {
 
     let m = self.mixer;
     let s = self.shift;
-    let h = u64::from(m.hash(key));
+    let h = hash(m, key).get();
 
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
@@ -154,7 +152,7 @@ impl<T> HashMapNZ64<T> {
 
     let m = self.mixer;
     let s = self.shift;
-    let h = u64::from(m.hash(key));
+    let h = hash(m, key).get();
 
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
@@ -166,7 +164,7 @@ impl<T> HashMapNZ64<T> {
 
     if x != h { return None; }
 
-    Some(unsafe { (&*p).value.assume_init_ref() })
+    Some(unsafe { (&*p).data.assume_init_ref() })
   }
 
   /// Returns a mutable reference to the value associated with the given key,
@@ -180,7 +178,7 @@ impl<T> HashMapNZ64<T> {
 
     let m = self.mixer;
     let s = self.shift;
-    let h = u64::from(m.hash(key));
+    let h = hash(m, key).get();
 
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
@@ -192,7 +190,7 @@ impl<T> HashMapNZ64<T> {
 
     if x != h { return None; }
 
-    Some(unsafe { (&mut *p).value.assume_init_mut() })
+    Some(unsafe { (&mut *p).data.assume_init_mut() })
   }
 
   #[inline(never)]
@@ -211,11 +209,11 @@ impl<T> HashMapNZ64<T> {
     let b = unsafe { a.add(INITIAL_N - 1) };
 
     let m = self.mixer;
-    let h = u64::from(m.hash(key));
+    let h = hash(m, key).get();
     let p = unsafe { t.offset(- spot(INITIAL_S, h)) };
 
     unsafe { &mut *p }.hash = h;
-    unsafe { &mut *p }.value = MaybeUninit::new(value);
+    unsafe { &mut *p }.data = MaybeUninit::new(value);
 
     // We only modify `self` after we know that allocation has succeeded.
 
@@ -308,7 +306,7 @@ impl<T> HashMapNZ64<T> {
       if x != 0 {
         q = max(q, unsafe { new_t.offset(- spot(new_s, x)) });
         unsafe { &mut *q }.hash = x;
-        unsafe { &mut *q }.value = MaybeUninit::new(unsafe { (&*p).value.assume_init_read() });
+        unsafe { &mut *q }.data = MaybeUninit::new(unsafe { (&*p).data.assume_init_read() });
         q = unsafe { q.add(1) };
       }
 
@@ -345,7 +343,7 @@ impl<T> HashMapNZ64<T> {
 
     let m = self.mixer;
     let s = self.shift;
-    let h = u64::from(m.hash(key));
+    let h = hash(m, key).get();
 
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
@@ -356,7 +354,7 @@ impl<T> HashMapNZ64<T> {
     }
 
     if x == h {
-      let v = mem::replace(unsafe { (&mut *p).value.assume_init_mut() }, value);
+      let v = mem::replace(unsafe { (&mut *p).data.assume_init_mut() }, value);
       return Some(v);
     }
 
@@ -365,12 +363,12 @@ impl<T> HashMapNZ64<T> {
     unsafe { &mut *p }.hash = h;
 
     while x != 0 {
-      v = mem::replace(unsafe { (&mut *p).value.assume_init_mut() }, v);
+      v = mem::replace(unsafe { (&mut *p).data.assume_init_mut() }, v);
       p = unsafe { p.add(1) };
       x = mem::replace(&mut unsafe { &mut *p }.hash, x);
     }
 
-    unsafe { &mut *p }.value = MaybeUninit::new(v);
+    unsafe { &mut *p }.data = MaybeUninit::new(v);
 
     let r = self.space - 1;
     self.space = r;
@@ -392,7 +390,7 @@ impl<T> HashMapNZ64<T> {
 
     let m = self.mixer;
     let s = self.shift;
-    let h = u64::from(m.hash(key));
+    let h = hash(m, key).get();
 
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
@@ -404,7 +402,7 @@ impl<T> HashMapNZ64<T> {
 
     if x != h { return None; }
 
-    let v = unsafe { (&mut *p).value.assume_init_read() };
+    let v = unsafe { (&mut *p).data.assume_init_read() };
 
     loop {
       let q = unsafe { p.add(1) };
@@ -413,7 +411,7 @@ impl<T> HashMapNZ64<T> {
       if p < unsafe { t.offset(- spot(s, x)) } || expect(x == 0, false) { break; }
 
       unsafe { &mut *p }.hash = x;
-      unsafe { &mut *p }.value = MaybeUninit::new(unsafe { (&*q).value.assume_init_read() });
+      unsafe { &mut *p }.data = MaybeUninit::new(unsafe { (&*q).data.assume_init_read() });
 
       p = q;
     }
@@ -432,7 +430,7 @@ impl<T> HashMapNZ64<T> {
 
     let m = self.mixer;
     let s = self.shift;
-    let h = u64::from(m.hash(key));
+    let h = hash(m, key).get();
 
     let mut p = unsafe { t.offset(- spot(s, h)) };
     let mut x = unsafe { &*p }.hash;
@@ -489,7 +487,7 @@ impl<T> HashMapNZ64<T> {
           k -= 1;
           r += 1;
           self.space = r;
-          unsafe { (&mut *p).value.assume_init_drop() };
+          unsafe { (&mut *p).data.assume_init_drop() };
           if k == 0 { break; }
         }
       }
@@ -537,7 +535,7 @@ impl<T> HashMapNZ64<T> {
 
       while p <= b {
         if unsafe { &mut *p }.hash != 0 {
-          unsafe { (&mut *p).value.assume_init_drop() };
+          unsafe { (&mut *p).data.assume_init_drop() };
         }
         p = unsafe { p.add(1) };
       }
@@ -851,17 +849,17 @@ impl<T: fmt::Debug> fmt::Debug for HashMapNZ64<T> {
 impl<'a, T> OccupiedEntry<'a, T> {
   #[inline(always)]
   pub fn get(&self) -> &T {
-    unsafe { (&*self.ptr).value.assume_init_ref() }
+    unsafe { (&*self.ptr).data.assume_init_ref() }
   }
 
   #[inline(always)]
   pub fn get_mut(&mut self) -> &mut T {
-    unsafe { (&mut *self.ptr).value.assume_init_mut() }
+    unsafe { (&mut *self.ptr).data.assume_init_mut() }
   }
 
   #[inline(always)]
   pub fn into_mut(self) -> &'a mut T {
-    unsafe { (&mut *self.ptr).value.assume_init_mut() }
+    unsafe { (&mut *self.ptr).data.assume_init_mut() }
   }
 
   #[inline(always)]
@@ -876,7 +874,7 @@ impl<'a, T> OccupiedEntry<'a, T> {
     let t = o.table as *mut Slot<T>;
     let s = o.shift;
 
-    let v = unsafe { (&mut *p).value.assume_init_read() };
+    let v = unsafe { (&mut *p).data.assume_init_read() };
 
     loop {
       let q = unsafe { p.add(1) };
@@ -885,7 +883,7 @@ impl<'a, T> OccupiedEntry<'a, T> {
       if p < unsafe { t.offset(- spot(s, x)) } || expect(x == 0, false) { break; }
 
       unsafe { &mut *p }.hash = x;
-      unsafe { &mut *p }.value = MaybeUninit::new(unsafe { (&*q).value.assume_init_read() });
+      unsafe { &mut *p }.data = MaybeUninit::new(unsafe { (&*q).data.assume_init_read() });
 
       p = q;
     }
@@ -924,8 +922,8 @@ impl<'a, T> Iterator for Iter<'a, T> {
       x = unsafe { &*p }.hash;
     }
 
-    let x = self.rev.hash(unsafe { NonZeroU64::new_unchecked(x) });
-    let v = unsafe { (&*p).value.assume_init_ref() };
+    let x = hash(self.rev, unsafe { NonZeroU64::new_unchecked(x) });
+    let v = unsafe { (&*p).data.assume_init_ref() };
 
     self.len = k - 1;
     self.ptr = p;
@@ -956,8 +954,8 @@ impl<'a, T> Iterator for IterMut<'a, T> {
       x = unsafe { &*p }.hash;
     }
 
-    let x = self.rev.hash(unsafe { NonZeroU64::new_unchecked(x) });
-    let v = unsafe { (&mut *p).value.assume_init_mut() };
+    let x = hash(self.rev, unsafe { NonZeroU64::new_unchecked(x) });
+    let v = unsafe { (&mut *p).data.assume_init_mut() };
 
     self.len = k - 1;
     self.ptr = p;
@@ -988,7 +986,7 @@ impl<'a, T> Iterator for Keys<'a, T> {
       x = unsafe { &*p }.hash;
     }
 
-    let x = self.rev.hash(unsafe { NonZeroU64::new_unchecked(x) });
+    let x = hash(self.rev, unsafe { NonZeroU64::new_unchecked(x) });
 
     self.len = k - 1;
     self.ptr = p;
@@ -1019,7 +1017,7 @@ impl<'a, T> Iterator for Values<'a, T> {
       x = unsafe { &*p }.hash;
     }
 
-    let v = unsafe { (&*p).value.assume_init_ref() };
+    let v = unsafe { (&*p).data.assume_init_ref() };
 
     self.len = k - 1;
     self.ptr = p;
@@ -1050,7 +1048,7 @@ impl<'a, T> Iterator for ValuesMut<'a, T> {
       x = unsafe { &*p }.hash;
     }
 
-    let v = unsafe { (&mut *p).value.assume_init_mut() };
+    let v = unsafe { (&mut *p).data.assume_init_mut() };
 
     self.len = k - 1;
     self.ptr = p;
@@ -1081,8 +1079,8 @@ impl<T> Iterator for IntoIter<T> {
       x = unsafe { &*p }.hash;
     }
 
-    let x = self.rev.hash(unsafe { NonZeroU64::new_unchecked(x) });
-    let v = unsafe { (&*p).value.assume_init_read() };
+    let x = hash(self.rev, unsafe { NonZeroU64::new_unchecked(x) });
+    let v = unsafe { (&*p).data.assume_init_read() };
 
     self.len = k - 1;
     self.ptr = p;
@@ -1127,7 +1125,7 @@ impl<T> Iterator for IntoValues<T> {
       x = unsafe { &*p }.hash;
     }
 
-    let v = unsafe { (&*p).value.assume_init_read() };
+    let v = unsafe { (&*p).data.assume_init_read() };
 
     self.ptr = p;
     self.len = k - 1;

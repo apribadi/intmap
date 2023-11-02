@@ -15,6 +15,7 @@ pub(crate) use core::ops::Index;
 pub(crate) use core::ops::IndexMut;
 pub(crate) use core::ptr::NonNull;
 pub(crate) use core::ptr;
+pub(crate) use crate::ptr::Ptr;
 pub(crate) use crate::rng::Rng;
 pub(crate) use crate::rng;
 
